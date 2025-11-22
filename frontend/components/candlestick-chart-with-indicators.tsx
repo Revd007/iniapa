@@ -7,24 +7,90 @@ interface CandlestickChartProps {
   data: ChartData[]
 }
 
+/**
+ * Calculate Bollinger Bands
+ * @param data Chart data
+ * @param period Moving average period (default: 20)
+ * @param stddev Number of standard deviations (default: 2)
+ */
+function calculateBollingerBands(data: ChartData[], period: number = 20, stddev: number = 2) {
+  const result: Array<{ middle: number | null; upper: number | null; lower: number | null }> = []
+  
+  for (let i = 0; i < data.length; i++) {
+    if (i < period - 1) {
+      result.push({ middle: null, upper: null, lower: null })
+      continue
+    }
+    
+    // Calculate SMA (middle band)
+    const slice = data.slice(i - period + 1, i + 1)
+    const sum = slice.reduce((acc, d) => acc + d.close, 0)
+    const sma = sum / period
+    
+    // Calculate standard deviation
+    const variance = slice.reduce((acc, d) => acc + Math.pow(d.close - sma, 2), 0) / period
+    const std = Math.sqrt(variance)
+    
+    // Upper and lower bands
+    const upper = sma + (stddev * std)
+    const lower = sma - (stddev * std)
+    
+    result.push({ middle: sma, upper, lower })
+  }
+  
+  return result
+}
+
+/**
+ * Professional Candlestick Chart with Multiple Indicators
+ * Inspired by TradingView layout and functionality
+ * 
+ * Features:
+ * - Main Chart: Candlesticks, MA20, MA50, Bollinger Bands
+ * - RSI Panel (toggleable)
+ * - MACD Panel (toggleable)
+ * - Volume bars
+ * - Interactive zoom & pan
+ * - Crosshair with tooltip
+ */
 export default function CandlestickChartWithIndicators({ data }: CandlestickChartProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   
-  // State untuk zoom dan pan
+  // Zoom & Pan state
   const [offset, setOffset] = useState(0)
   const [zoom, setZoom] = useState(1)
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, offset: 0 })
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
+  
+  // Indicators state (toggleable)
+  const [showRSI, setShowRSI] = useState(true)
+  const [showMACD, setShowMACD] = useState(true)
+  const [showBB, setShowBB] = useState(false) // Bollinger Bands
+  const [showVolume, setShowVolume] = useState(true)
 
   useEffect(() => {
     const handleResize = () => {
       if (containerRef.current && canvasRef.current) {
         const rect = containerRef.current.getBoundingClientRect()
-        canvasRef.current.width = rect.width
-        canvasRef.current.height = rect.height
+        const dpr = window.devicePixelRatio || 1
+        
+        // Set canvas size with DPI scaling for crisp rendering
+        canvasRef.current.width = rect.width * dpr
+        canvasRef.current.height = rect.height * dpr
+        
+        // Scale context to match DPI
+        const ctx = canvasRef.current.getContext('2d')
+        if (ctx) {
+          ctx.scale(dpr, dpr)
+        }
+        
+        // Set display size (CSS)
+        canvasRef.current.style.width = `${rect.width}px`
+        canvasRef.current.style.height = `${rect.height}px`
+        
         drawChart()
       }
     }
@@ -32,7 +98,7 @@ export default function CandlestickChartWithIndicators({ data }: CandlestickChar
     handleResize()
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
-  }, [data, offset, zoom, hoveredIndex, mousePos])
+  }, [data, offset, zoom, hoveredIndex, mousePos, showRSI, showMACD, showBB, showVolume])
 
   /**
    * Main drawing function dengan 3 panels: Main Chart, RSI, MACD
@@ -44,8 +110,10 @@ export default function CandlestickChartWithIndicators({ data }: CandlestickChar
     const ctx = canvas.getContext('2d', { alpha: false })
     if (!ctx) return
 
-    const width = canvas.width
-    const height = canvas.height
+    // Use CSS dimensions (already scaled by DPI in useEffect)
+    const rect = containerRef.current.getBoundingClientRect()
+    const width = rect.width
+    const height = rect.height
 
     // === Clear canvas ===
     ctx.fillStyle = '#0a0e14'
@@ -84,16 +152,34 @@ export default function CandlestickChartWithIndicators({ data }: CandlestickChar
     const panelGap = 5
 
     const totalHeight = height - marginTop - marginBottom
-    const mainPanelHeight = Math.floor(totalHeight * 0.60) // 60% untuk main chart
-    const rsiPanelHeight = Math.floor(totalHeight * 0.20)  // 20% untuk RSI
-    const macdPanelHeight = Math.floor(totalHeight * 0.20) // 20% untuk MACD
+    
+    // === Dynamic layout based on enabled indicators ===
+    const enabledIndicators = [showRSI, showMACD].filter(Boolean).length
+    let mainPanelHeight: number, rsiPanelHeight: number, macdPanelHeight: number
+    
+    if (enabledIndicators === 0) {
+      // No indicators: Main chart takes 100%
+      mainPanelHeight = totalHeight
+      rsiPanelHeight = 0
+      macdPanelHeight = 0
+    } else if (enabledIndicators === 1) {
+      // One indicator: 75% main, 25% indicator
+      mainPanelHeight = Math.floor(totalHeight * 0.75)
+      rsiPanelHeight = showRSI ? Math.floor(totalHeight * 0.25) : 0
+      macdPanelHeight = showMACD ? Math.floor(totalHeight * 0.25) : 0
+    } else {
+      // Both indicators: 60% main, 20% each indicator
+      mainPanelHeight = Math.floor(totalHeight * 0.60)
+      rsiPanelHeight = showRSI ? Math.floor(totalHeight * 0.20) : 0
+      macdPanelHeight = showMACD ? Math.floor(totalHeight * 0.20) : 0
+    }
 
     const chartWidth = width - marginLeft - marginRight
 
-    // Panel positions
+    // Panel positions (dynamic based on what's enabled)
     const mainPanelTop = marginTop
-    const rsiPanelTop = mainPanelTop + mainPanelHeight + panelGap
-    const macdPanelTop = rsiPanelTop + rsiPanelHeight + panelGap
+    const rsiPanelTop = mainPanelTop + mainPanelHeight + (showRSI ? panelGap : 0)
+    const macdPanelTop = rsiPanelTop + rsiPanelHeight + (showMACD ? panelGap : 0)
 
     // Helper: convert index to X coordinate
     const candleWidth = chartWidth / candlesPerView
@@ -112,27 +198,31 @@ export default function CandlestickChartWithIndicators({ data }: CandlestickChar
       indexToX
     })
 
-    // === PANEL 2: RSI ===
-    drawRSIPanel(ctx, visibleData, startIndex, {
-      left: marginLeft,
-      right: marginLeft + chartWidth,
-      top: rsiPanelTop,
-      height: rsiPanelHeight,
-      width: chartWidth,
-      candleWidth,
-      indexToX
-    })
+    // === PANEL 2: RSI (if enabled) ===
+    if (showRSI) {
+      drawRSIPanel(ctx, visibleData, startIndex, {
+        left: marginLeft,
+        right: marginLeft + chartWidth,
+        top: rsiPanelTop,
+        height: rsiPanelHeight,
+        width: chartWidth,
+        candleWidth,
+        indexToX
+      })
+    }
 
-    // === PANEL 3: MACD ===
-    drawMACDPanel(ctx, visibleData, startIndex, {
-      left: marginLeft,
-      right: marginLeft + chartWidth,
-      top: macdPanelTop,
-      height: macdPanelHeight,
-      width: chartWidth,
-      candleWidth,
-      indexToX
-    })
+    // === PANEL 3: MACD (if enabled) ===
+    if (showMACD) {
+      drawMACDPanel(ctx, visibleData, startIndex, {
+        left: marginLeft,
+        right: marginLeft + chartWidth,
+        top: macdPanelTop,
+        height: macdPanelHeight,
+        width: chartWidth,
+        candleWidth,
+        indexToX
+      })
+    }
 
     // === Draw crosshair & tooltip (over all panels) ===
     if (hoveredIndex !== null && mousePos) {
@@ -220,6 +310,72 @@ export default function CandlestickChartWithIndicators({ data }: CandlestickChar
     }
     ctx.stroke()
 
+    // Bollinger Bands (20-period, 2 stddev) - Draw if enabled
+    if (showBB) {
+      const bbData = calculateBollingerBands(visibleData, 20, 2)
+      
+      // Upper band - Purple
+      ctx.strokeStyle = '#9333ea'
+      ctx.lineWidth = 1
+      ctx.setLineDash([3, 3])
+      ctx.beginPath()
+      let bbUpperStarted = false
+      for (let i = 0; i < bbData.length; i++) {
+        if (bbData[i].upper !== null) {
+          const x = indexToX(i + startIndex) + candleWidth / 2
+          const y = priceToY(bbData[i].upper!)
+          if (!bbUpperStarted) {
+            ctx.moveTo(x, y)
+            bbUpperStarted = true
+          } else {
+            ctx.lineTo(x, y)
+          }
+        }
+      }
+      ctx.stroke()
+      
+      // Lower band - Purple
+      ctx.beginPath()
+      let bbLowerStarted = false
+      for (let i = 0; i < bbData.length; i++) {
+        if (bbData[i].lower !== null) {
+          const x = indexToX(i + startIndex) + candleWidth / 2
+          const y = priceToY(bbData[i].lower!)
+          if (!bbLowerStarted) {
+            ctx.moveTo(x, y)
+            bbLowerStarted = true
+          } else {
+            ctx.lineTo(x, y)
+          }
+        }
+      }
+      ctx.stroke()
+      ctx.setLineDash([]) // Reset dash
+      
+      // Fill area between bands with semi-transparent purple
+      ctx.fillStyle = 'rgba(147, 51, 234, 0.05)'
+      ctx.beginPath()
+      // Upper band
+      for (let i = 0; i < bbData.length; i++) {
+        if (bbData[i].upper !== null) {
+          const x = indexToX(i + startIndex) + candleWidth / 2
+          const y = priceToY(bbData[i].upper!)
+          if (i === 0) ctx.moveTo(x, y)
+          else ctx.lineTo(x, y)
+        }
+      }
+      // Lower band (reverse)
+      for (let i = bbData.length - 1; i >= 0; i--) {
+        if (bbData[i].lower !== null) {
+          const x = indexToX(i + startIndex) + candleWidth / 2
+          const y = priceToY(bbData[i].lower!)
+          ctx.lineTo(x, y)
+        }
+      }
+      ctx.closePath()
+      ctx.fill()
+    }
+
     // Draw candlesticks
     visibleData.forEach((candle, i) => {
       const x = indexToX(i + startIndex)
@@ -277,6 +433,30 @@ export default function CandlestickChartWithIndicators({ data }: CandlestickChar
         }
       }
     })
+
+    // Draw volume bars at bottom of main panel (if enabled)
+    if (showVolume) {
+      const maxVolume = Math.max(...visibleData.map(d => d.volume))
+      const volumeHeight = height * 0.15 // 15% of panel height for volume
+      const volumeBottom = top + height - 5
+      const volumeTop = volumeBottom - volumeHeight
+
+      visibleData.forEach((candle, i) => {
+        const x = indexToX(i + startIndex)
+        const isBullish = candle.close >= candle.open
+        const barHeight = (candle.volume / maxVolume) * volumeHeight
+        const barTop = volumeBottom - barHeight
+        
+        // Volume bar color with transparency
+        ctx.fillStyle = isBullish 
+          ? 'rgba(38, 166, 154, 0.3)'  // Teal green
+          : 'rgba(239, 83, 80, 0.3)'   // Red
+        
+        const barWidth = Math.max(1, candleWidth * 0.8)
+        const centerX = x + candleWidth / 2
+        ctx.fillRect(centerX - barWidth / 2, barTop, barWidth, barHeight)
+      })
+    }
   }
 
   /**
@@ -661,6 +841,54 @@ export default function CandlestickChartWithIndicators({ data }: CandlestickChar
         onWheel={handleWheel}
         className="w-full h-full cursor-crosshair"
       />
+      
+      {/* Indicators Toolbar - Top Left */}
+      <div className="absolute top-2 left-2 flex gap-1 bg-slate-900/90 border border-slate-700 rounded p-1">
+        <button
+          onClick={() => setShowRSI(!showRSI)}
+          className={`px-2 h-6 flex items-center justify-center rounded text-[10px] font-semibold transition-colors ${
+            showRSI 
+              ? 'bg-cyan-600 text-white hover:bg-cyan-700' 
+              : 'text-slate-400 hover:text-white hover:bg-slate-800'
+          }`}
+          title="Toggle RSI"
+        >
+          RSI
+        </button>
+        <button
+          onClick={() => setShowMACD(!showMACD)}
+          className={`px-2 h-6 flex items-center justify-center rounded text-[10px] font-semibold transition-colors ${
+            showMACD 
+              ? 'bg-blue-600 text-white hover:bg-blue-700' 
+              : 'text-slate-400 hover:text-white hover:bg-slate-800'
+          }`}
+          title="Toggle MACD"
+        >
+          MACD
+        </button>
+        <button
+          onClick={() => setShowBB(!showBB)}
+          className={`px-2 h-6 flex items-center justify-center rounded text-[10px] font-semibold transition-colors ${
+            showBB 
+              ? 'bg-purple-600 text-white hover:bg-purple-700' 
+              : 'text-slate-400 hover:text-white hover:bg-slate-800'
+          }`}
+          title="Toggle Bollinger Bands"
+        >
+          BB
+        </button>
+        <button
+          onClick={() => setShowVolume(!showVolume)}
+          className={`px-2 h-6 flex items-center justify-center rounded text-[10px] font-semibold transition-colors ${
+            showVolume 
+              ? 'bg-green-600 text-white hover:bg-green-700' 
+              : 'text-slate-400 hover:text-white hover:bg-slate-800'
+          }`}
+          title="Toggle Volume"
+        >
+          VOL
+        </button>
+      </div>
       
       {/* Zoom controls */}
       <div className="absolute bottom-2 right-2 flex gap-1 bg-slate-900/90 border border-slate-700 rounded p-1">

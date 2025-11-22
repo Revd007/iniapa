@@ -1,64 +1,145 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { ChartData } from '@/lib/api'
 
 interface CandlestickChartProps {
   data: ChartData[]
 }
 
+/**
+ * Professional Candlestick Chart Component
+ * 
+ * Features:
+ * - Real-time price visualization with candlestick patterns
+ * - Interactive zoom and pan controls
+ * - Moving averages (MA20, MA50)
+ * - Volume bars
+ * - Crosshair with OHLCV tooltip
+ * - Responsive design
+ * 
+ * Performance optimizations:
+ * - Efficient canvas rendering
+ * - Debounced resize handling
+ * - Memoized calculation functions
+ */
 export default function CandlestickChart({ data }: CandlestickChartProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const animationFrameRef = useRef<number>()
   
-  // State untuk zoom dan pan
+  // Chart interaction state
   const [offset, setOffset] = useState(0)
   const [zoom, setZoom] = useState(1)
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, offset: 0 })
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
+  /**
+   * Setup canvas and handle window resize
+   * Uses debouncing to prevent excessive redraws during resize
+   */
   useEffect(() => {
+    let resizeTimeout: NodeJS.Timeout
+
     const handleResize = () => {
-      if (containerRef.current && canvasRef.current) {
-        const rect = containerRef.current.getBoundingClientRect()
-        canvasRef.current.width = rect.width
-        canvasRef.current.height = rect.height
-        drawChart()
-      }
+      clearTimeout(resizeTimeout)
+      resizeTimeout = setTimeout(() => {
+        if (containerRef.current && canvasRef.current) {
+          const rect = containerRef.current.getBoundingClientRect()
+          const dpr = window.devicePixelRatio || 1
+          
+          // Set canvas size with device pixel ratio for crisp rendering
+          canvasRef.current.width = rect.width * dpr
+          canvasRef.current.height = rect.height * dpr
+          canvasRef.current.style.width = `${rect.width}px`
+          canvasRef.current.style.height = `${rect.height}px`
+          
+          // Scale context for high-DPI displays
+          const ctx = canvasRef.current.getContext('2d')
+          if (ctx) {
+            ctx.scale(dpr, dpr)
+          }
+          
+          drawChart()
+        }
+      }, 100) // Debounce resize events
     }
 
-    handleResize()
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+    try {
+      handleResize()
+      window.addEventListener('resize', handleResize)
+    } catch (err) {
+      setError('Failed to initialize chart')
+      console.error('Chart initialization error:', err)
+    }
+
+    return () => {
+      clearTimeout(resizeTimeout)
+      window.removeEventListener('resize', handleResize)
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+    }
   }, [data, offset, zoom, hoveredIndex, mousePos])
 
   /**
    * Main drawing function - renders entire chart
-   * Mengikuti style TradingView dengan warna dan layout yang profesional
+   * 
+   * Follows TradingView style with professional colors and layout
+   * Optimized for performance with efficient canvas operations
    */
-  const drawChart = () => {
-    if (!canvasRef.current || !containerRef.current || data.length === 0) return
+  const drawChart = useCallback(() => {
+    if (!canvasRef.current || !containerRef.current) return
+    
+    // Validation: Check if data is available and valid
+    if (!data || data.length === 0) {
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext('2d')
+      if (ctx) {
+        const rect = containerRef.current.getBoundingClientRect()
+        ctx.fillStyle = '#0f1419'
+        ctx.fillRect(0, 0, rect.width, rect.height)
+        ctx.fillStyle = '#848e9c'
+        ctx.font = '14px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText('No chart data available', rect.width / 2, rect.height / 2)
+      }
+      return
+    }
 
     const canvas = canvasRef.current
-    const ctx = canvas.getContext('2d', { alpha: false })
+    const ctx = canvas.getContext('2d', { 
+      alpha: false,
+      desynchronized: true // Hint for better performance
+    })
     if (!ctx) return
 
-    const width = canvas.width
-    const height = canvas.height
+    // Use actual display size, not scaled canvas size
+    const rect = containerRef.current.getBoundingClientRect()
+    const width = rect.width
+    const height = rect.height
 
     // === Clear canvas dengan dark background ala TradingView ===
     ctx.fillStyle = '#0f1419'
     ctx.fillRect(0, 0, width, height)
 
-    // === Calculate visible data range ===
+    // === Calculate visible data range with bounds checking ===
     const candlesPerView = Math.max(30, Math.floor(100 / zoom))
-    const endIndex = data.length - offset
+    const endIndex = Math.min(data.length, data.length - offset)
     const startIndex = Math.max(0, endIndex - candlesPerView)
     const visibleData = data.slice(startIndex, endIndex)
 
-    if (visibleData.length === 0) return
+    // Safety check for empty visible data
+    if (!visibleData || visibleData.length === 0) {
+      ctx.fillStyle = '#848e9c'
+      ctx.font = '12px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('No data in current view', width / 2, height / 2)
+      return
+    }
 
     // === Chart margins (untuk axes dan labels) ===
     const marginLeft = 60
@@ -68,11 +149,19 @@ export default function CandlestickChart({ data }: CandlestickChartProps) {
     const chartWidth = width - marginLeft - marginRight
     const chartHeight = height - marginTop - marginBottom
 
-    // === Calculate price range dengan padding ===
-    const prices = visibleData.flatMap(d => [d.high, d.low])
+    // === Calculate price range with padding and validation ===
+    const prices = visibleData.flatMap(d => [d.high || 0, d.low || 0]).filter(p => p > 0)
+    if (prices.length === 0) {
+      ctx.fillStyle = '#848e9c'
+      ctx.font = '12px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('Invalid price data', width / 2, height / 2)
+      return
+    }
+    
     const maxPrice = Math.max(...prices)
     const minPrice = Math.min(...prices)
-    const priceRange = maxPrice - minPrice
+    const priceRange = Math.max(maxPrice - minPrice, 0.01) // Prevent division by zero
     const padding = priceRange * 0.08 // 8% padding
 
     // Helper: convert price to Y coordinate
@@ -306,11 +395,14 @@ export default function CandlestickChart({ data }: CandlestickChartProps) {
     // === Draw volume bars at bottom ===
     const volumeHeight = 50
     const volumeTop = marginTop + chartHeight + 30
-    const maxVolume = Math.max(...visibleData.map(d => d.volume))
+    const volumes = visibleData.map(d => d.volume || 0).filter(v => v > 0)
+    const maxVolume = volumes.length > 0 ? Math.max(...volumes) : 1 // Prevent division by zero
 
     visibleData.forEach((candle, i) => {
+      if (!candle.volume || candle.volume <= 0) return
+      
       const x = indexToX(i + startIndex)
-      const barHeight = (candle.volume / maxVolume) * volumeHeight
+      const barHeight = Math.min((candle.volume / maxVolume) * volumeHeight, volumeHeight)
       const centerX = x + candleWidth / 2
       const barWidth = Math.min(10, candleWidth * 0.6)
 
@@ -318,7 +410,7 @@ export default function CandlestickChart({ data }: CandlestickChartProps) {
       ctx.fillStyle = isBullish ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
       ctx.fillRect(centerX - barWidth / 2, volumeTop + volumeHeight - barHeight, barWidth, barHeight)
     })
-  }
+  }, [data, offset, zoom, hoveredIndex, mousePos])
 
   // === Event handlers untuk interaksi ===
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -386,6 +478,18 @@ export default function CandlestickChart({ data }: CandlestickChartProps) {
   const resetZoom = () => {
     setZoom(1)
     setOffset(0)
+  }
+
+  // Show error message if chart failed to initialize
+  if (error) {
+    return (
+      <div className="relative w-full h-full flex items-center justify-center bg-slate-900">
+        <div className="text-center">
+          <p className="text-red-400 font-semibold mb-2">⚠️ Chart Error</p>
+          <p className="text-slate-400 text-sm">{error}</p>
+        </div>
+      </div>
+    )
   }
 
   return (

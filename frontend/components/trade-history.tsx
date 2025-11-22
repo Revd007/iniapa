@@ -15,7 +15,9 @@ interface Trade {
   is_win: boolean | null
   status: string
   leverage: number
-  trading_mode: string
+  trading_mode?: string
+  ai_confidence?: number
+  ai_reason?: string
   created_at: string
   closed_at: string | null
 }
@@ -99,7 +101,21 @@ export default function TradeHistory() {
                     <span className="text-[9px] text-slate-500">{timeStr}</span>
                   </div>
                 </td>
-                <td className="py-1 pr-2 font-semibold text-xs text-white">{trade.symbol}</td>
+                <td className="py-1 pr-2">
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1">
+                      <span className="font-semibold text-xs text-white">{trade.symbol}</span>
+                      {trade.ai_confidence && (
+                        <span className="text-[8px] px-1 py-0.5 bg-purple-900/50 text-purple-300 rounded border border-purple-700">
+                          🤖 {trade.ai_confidence}%
+                        </span>
+                      )}
+                    </div>
+                    {trade.trading_mode && (
+                      <span className="text-[8px] text-slate-500 capitalize">{trade.trading_mode}</span>
+                    )}
+                  </div>
+                </td>
                 <td className="py-1 pr-2 text-right">
                   <span className={`px-1.5 py-0.5 rounded text-[9px] ${
                     trade.side === 'BUY' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'

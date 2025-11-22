@@ -22,10 +22,10 @@ export default function TradeExecution({ mode, assetClass, symbol }: TradeExecut
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
 
   const leverageMap = {
-    scalper: '10',
-    aggressive: '5',
-    normal: '2',
-    longhold: '1',
+    scalper: '50',
+    aggressive: '40',
+    normal: '25',
+    longhold: '10',
   }
 
   const speedMap = {

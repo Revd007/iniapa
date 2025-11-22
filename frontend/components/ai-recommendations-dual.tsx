@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { aiApi, type AIRecommendation } from '@/lib/api'
+import { aiApi, userSettingsApi, type AIRecommendation } from '@/lib/api'
 
 interface AIRecommendationsDualProps {
   mode: 'scalper' | 'normal' | 'aggressive' | 'longhold'
@@ -112,17 +112,47 @@ function AIPanel({ model, mode, assetClass, recommendations, loading, error, onR
                   />
                 </div>
 
-                {/* Reason - Compact */}
-                <p className="text-[10px] opacity-75 mb-1.5 line-clamp-2">{rec.reason}</p>
-
-                {/* Prices - Grid */}
-                {(rec.entry_price || rec.target_price || rec.stop_loss) && (
-                  <div className="grid grid-cols-3 gap-1 text-[9px] mb-1.5 opacity-75">
-                    {rec.entry_price && <div><span className="opacity-60">E:</span> {rec.entry_price}</div>}
-                    {rec.target_price && <div><span className="opacity-60">T:</span> {rec.target_price}</div>}
-                    {rec.stop_loss && <div><span className="opacity-60">S:</span> {rec.stop_loss}</div>}
+                {/* Entry/Target/SL Prices - CLEAR & VISIBLE (Top Priority) */}
+                <div className="bg-slate-900/80 rounded p-2.5 mb-2 border border-slate-600/50">
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {rec.entry_price && (
+                      <div className="flex flex-col">
+                        <span className="text-[9px] text-slate-400 mb-1 font-semibold uppercase">Entry</span>
+                        <span className="text-blue-300 font-bold text-xs break-words">
+                          {rec.entry_price.includes('$') ? rec.entry_price : `$${rec.entry_price}`}
+                        </span>
+                      </div>
+                    )}
+                    {rec.target_price && (
+                      <div className="flex flex-col">
+                        <span className="text-[9px] text-slate-400 mb-1 font-semibold uppercase">Target</span>
+                        <span className="text-green-300 font-bold text-xs break-words">
+                          {rec.target_price.includes('$') ? rec.target_price : `$${rec.target_price}`}
+                        </span>
+                      </div>
+                    )}
+                    {rec.stop_loss && (
+                      <div className="flex flex-col">
+                        <span className="text-[9px] text-slate-400 mb-1 font-semibold uppercase">Stop Loss</span>
+                        <span className="text-red-300 font-bold text-xs break-words">
+                          {rec.stop_loss.includes('$') ? rec.stop_loss : `$${rec.stop_loss}`}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                )}
+                  {!rec.entry_price && !rec.target_price && !rec.stop_loss && (
+                    <div className="text-[9px] text-slate-500 text-center py-2">
+                      No price data available. Wait for AI analysis...
+                    </div>
+                  )}
+                </div>
+
+                {/* Reason - CLEAR & FULL TEXT (No truncation) */}
+                <div className="bg-slate-800/50 rounded p-2 mb-1.5 border border-slate-700/30">
+                  <p className="text-[10px] text-slate-300 leading-relaxed whitespace-pre-wrap break-words">
+                    {rec.reason || 'No analysis available'}
+                  </p>
+                </div>
 
                 {/* Meta - Compact */}
                 <div className="flex justify-between items-center text-[9px] opacity-70 pt-1.5 border-t border-current/20">
@@ -174,6 +204,18 @@ export default function AIRecommendationsDual({ mode, assetClass }: AIRecommenda
     fetchQwen()
   }
 
+  // Helper: Get pinned symbols from DATABASE
+  const getPinnedSymbols = async (): Promise<string[]> => {
+    try {
+      const symbols = await userSettingsApi.getPinnedSymbols(assetClass)
+      console.log('[AI] Pinned symbols from DB:', symbols)
+      return symbols
+    } catch (e) {
+      console.error('[AI] Failed to load pinned symbols from DB:', e)
+      return []
+    }
+  }
+
   const fetchDeepseek = async () => {
     if (assetClass !== 'crypto') {
       setDeepseekRecs([])
@@ -185,13 +227,16 @@ export default function AIRecommendationsDual({ mode, assetClass }: AIRecommenda
     setDeepseekError(null)
 
     try {
-      const data = await aiApi.getRecommendations(mode, assetClass, 6, 'deepseek')
+      const pinnedSymbols = await getPinnedSymbols()
+      console.log('[AI DeepSeek] Fetching with pinned symbols:', pinnedSymbols)
+      const data = await aiApi.getRecommendations(mode, assetClass, 6, 'deepseek', pinnedSymbols)
+      console.log('[AI DeepSeek] Received recommendations:', data)
       setDeepseekRecs(data)
       setDeepseekLoading(false)
     } catch (err: any) {
       setDeepseekError(err.message || 'Failed to fetch')
       setDeepseekLoading(false)
-      console.error('DeepSeek error:', err)
+      console.error('[AI DeepSeek] Error:', err)
     }
   }
 
@@ -206,13 +251,16 @@ export default function AIRecommendationsDual({ mode, assetClass }: AIRecommenda
     setQwenError(null)
 
     try {
-      const data = await aiApi.getRecommendations(mode, assetClass, 6, 'qwen')
+      const pinnedSymbols = await getPinnedSymbols()
+      console.log('[AI Qwen] Fetching with pinned symbols:', pinnedSymbols)
+      const data = await aiApi.getRecommendations(mode, assetClass, 6, 'qwen', pinnedSymbols)
+      console.log('[AI Qwen] Received recommendations:', data)
       setQwenRecs(data)
       setQwenLoading(false)
     } catch (err: any) {
       setQwenError(err.message || 'Failed to fetch')
       setQwenLoading(false)
-      console.error('Qwen error:', err)
+      console.error('[AI Qwen] Error:', err)
     }
   }
 

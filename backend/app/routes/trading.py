@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 from app.database import get_db, Trade
@@ -27,6 +27,8 @@ class TradeRequest(BaseModel):
     price: Optional[float] = None
     leverage: Optional[float] = 1.0
     trading_mode: Optional[str] = "normal"
+    execution_mode: Optional[str] = "demo"  # demo or live
+    user_id: Optional[int] = 1
     ai_confidence: Optional[float] = None
     ai_reason: Optional[str] = None
     stop_loss: Optional[float] = None
@@ -45,79 +47,121 @@ async def execute_trade(
     request: Request,
     db: Session = Depends(get_db)
 ):
-    """Execute a trade (quick execute)"""
+    """
+    Execute trade dengan dual-mode support:
+    - demo: Paper trading, tidak hit Binance API, track di DB
+    - live: OAuth-authenticated, real trading (coming soon)
+    """
     try:
+        from app.models import TradeMode
+        from app.services.demo_account_service import DemoAccountService
+        
         binance_service = request.app.state.binance_service
+        
+        # Determine execution mode
+        execution_mode = TradeMode.DEMO if trade_request.execution_mode == "demo" else TradeMode.LIVE
+        user_id = trade_request.user_id or 1
         
         # Ensure symbol has USDT suffix
         symbol = trade_request.symbol
         if not symbol.endswith("USDT"):
             symbol = f"{symbol}USDT"
         
-        # ALWAYS get current market price from Binance for accurate entry_price
+        # ALWAYS get current market price from Binance
         ticker = await binance_service.get_ticker_price(symbol)
         market_price = float(ticker.get('price', 0))
         
-        # Use user-provided price for LIMIT orders, but market price for trade record
-        order_price = trade_request.price if trade_request.order_type == "LIMIT" and trade_request.price else market_price
-        
-        # Calculate total value based on market price (for accurate position sizing)
+        # Calculate total value
         total_value = trade_request.quantity * market_price
         
-        # Entry price for database will be the actual fill price or market price
+        # Check margin availability for demo mode
+        if execution_mode == TradeMode.DEMO:
+            can_trade, reason = DemoAccountService.can_open_trade(
+                db, 
+                user_id,
+                trade_request.quantity,
+                market_price,
+                trade_request.leverage or 1.0
+            )
+            if not can_trade:
+                raise HTTPException(status_code=400, detail=reason)
+        
+        # Entry price
         current_price = market_price
-
         binance_order_id = None
         sl_order_id: Optional[str] = None
         tp_order_id: Optional[str] = None
-
-        # Detect paper-trading mode (config flag) or missing keys; if so, do not send real orders
-        api_key = settings.BINANCE_API_KEY or ""
-        paper_trading = settings.BINANCE_PAPER_TRADING or len(api_key.strip()) < 30
-
-        if paper_trading:
-            if settings.BINANCE_PAPER_TRADING:
-                logger.warning("BINANCE_PAPER_TRADING=true -> running in PAPER TRADING mode (no real orders).")
-            else:
-                logger.warning("Binance API key missing or too short; running in PAPER TRADING mode (no real orders).")
-        else:
-            # Execute order on Binance
+        
+        # Determine if we should execute real order to Binance
+        # Execute to Binance if:
+        # 1. Not in paper trading mode (BINANCE_PAPER_TRADING = false)
+        # 2. Has valid API keys (either demo or live keys)
+        # 3. Binance service is configured
+        paper_trading = settings.BINANCE_PAPER_TRADING
+        has_api_keys = bool(binance_service.api_key and binance_service.api_secret and len(binance_service.api_key) > 10)
+        
+        should_execute_binance = not paper_trading and has_api_keys and binance_service
+        
+        if should_execute_binance:
+            # Execute real order to Binance (Demo Testnet or Live)
             try:
-                order = await binance_service.create_order(
+                logger.info(f"🚀 Executing real order to Binance {'TESTNET' if settings.BINANCE_TESTNET else 'LIVE'}: {symbol} {trade_request.side}")
+                
+                order_response = await binance_service.create_order(
                     symbol=symbol,
                     side=trade_request.side,
                     order_type=trade_request.order_type,
                     quantity=trade_request.quantity,
-                    price=order_price if trade_request.order_type == "LIMIT" else None,
+                    price=trade_request.price if trade_request.order_type == "LIMIT" else None,
                     stop_loss=trade_request.stop_loss,
                     take_profit=trade_request.take_profit
                 )
                 
-                # Check if order was filled
-                if order.get('status') not in ['FILLED', 'NEW']:
-                    raise HTTPException(status_code=400, detail=f"Order failed: {order.get('status')}")
+                # Handle order response structure
+                main_order = order_response.get('main_order', order_response)
                 
-                binance_order_id = order.get('orderId')
-                sl_order_id = str(order.get('stop_loss_order', {}).get('orderId')) if order.get('stop_loss_order') else None
-                tp_order_id = str(order.get('take_profit_order', {}).get('orderId')) if order.get('take_profit_order') else None
+                # Extract order ID from response
+                binance_order_id = main_order.get('orderId') or main_order.get('orderId')
+                
+                # Extract SL/TP order IDs if they exist
+                if 'stop_loss_order' in order_response:
+                    sl_order_id = str(order_response['stop_loss_order'].get('orderId', ''))
+                if 'take_profit_order' in order_response:
+                    tp_order_id = str(order_response['take_profit_order'].get('orderId', ''))
                 
                 # Get actual fill price if available
-                if 'fills' in order and len(order['fills']) > 0:
-                    current_price = float(order['fills'][0]['price'])
+                if 'fills' in main_order and len(main_order['fills']) > 0:
+                    current_price = float(main_order['fills'][0]['price'])
                     total_value = trade_request.quantity * current_price
+                elif 'price' in main_order:
+                    current_price = float(main_order['price'])
+                
+                logger.info(f"✅ Binance order executed: OrderID={binance_order_id}, Price=${current_price:.2f}")
                 
             except Exception as e:
                 err_msg = str(e)
-                # If key/permission error, gracefully fall back to paper trading instead of 500
-                if "code': -2015" in err_msg or "Invalid API-key" in err_msg:
-                    logger.error(f"Binance demo/live key not authorized for trading ({err_msg}). Falling back to PAPER TRADING for this order.")
+                logger.error(f"❌ Failed to execute order to Binance: {err_msg}")
+                
+                # If key/permission error, gracefully fall back to paper trading
+                if "code': -2015" in err_msg or "Invalid API-key" in err_msg or "code': -1022" in err_msg:
+                    logger.warning("⚠️ Binance API key not authorized for trading. Falling back to PAPER TRADING mode.")
                     paper_trading = True
+                    should_execute_binance = False
                 else:
-                    logger.error(f"Binance order execution failed: {err_msg}")
+                    # For other errors, raise exception (might be temporary issue)
                     raise HTTPException(status_code=500, detail=f"Failed to execute order on Binance: {err_msg}")
+        else:
+            # Paper trading mode: simulation only
+            if paper_trading:
+                logger.info(f"📝 Paper trading mode: Simulating trade for {symbol} @ ${market_price} (no real Binance order)")
+            elif not has_api_keys:
+                logger.info(f"📝 No API keys configured: Simulating trade for {symbol} @ ${market_price} (no real Binance order)")
+            else:
+                logger.info(f"📝 Demo mode: Simulating trade for {symbol} @ ${market_price}")
         
-        # Create trade record (works both for real and paper trading)
+        # Create trade record in database
         trade = Trade(
+            user_id=user_id,
             symbol=symbol,
             side=trade_request.side,
             order_type=trade_request.order_type,
@@ -127,6 +171,7 @@ async def execute_trade(
             leverage=trade_request.leverage,
             entry_price=current_price,
             trading_mode=trade_request.trading_mode,
+            execution_mode=execution_mode,  # demo or live
             ai_confidence=trade_request.ai_confidence,
             ai_reason=trade_request.ai_reason,
             status="OPEN",
@@ -141,7 +186,8 @@ async def execute_trade(
         db.commit()
         db.refresh(trade)
         
-        logger.info(f"Trade executed: {trade.id} - {symbol} {trade_request.side} {trade_request.quantity}")
+        mode_label = "DEMO" if execution_mode == TradeMode.DEMO else "LIVE"
+        logger.info(f"Trade executed [{mode_label}]: {trade.id} - {symbol} {trade_request.side} {trade_request.quantity} @ ${current_price}")
         
         return {
             "success": True,
@@ -216,7 +262,7 @@ async def close_trade(
         trade.profit_loss_percent = profit_loss_percent
         trade.is_win = profit_loss > 0
         trade.status = "CLOSED"
-        trade.closed_at = datetime.utcnow()
+        trade.closed_at = datetime.now(timezone.utc)
         
         db.commit()
         db.refresh(trade)
@@ -302,63 +348,88 @@ async def get_positions(
             # Use cached mark price or fallback to entry price
             mark_price = mark_prices_cache.get(t.symbol) or t.entry_price
 
-            # AUTO-CLOSE CHECK: Check if TP or SL is hit
-            should_close = False
-            close_reason = None
-            
-            if t.stop_loss and mark_price:
-                if t.side == "BUY" and mark_price <= t.stop_loss:
-                    should_close = True
-                    close_reason = "Stop Loss"
-                elif t.side == "SELL" and mark_price >= t.stop_loss:
-                    should_close = True
-                    close_reason = "Stop Loss"
-            
-            if t.take_profit and mark_price:
-                if t.side == "BUY" and mark_price >= t.take_profit:
-                    should_close = True
-                    close_reason = "Take Profit"
-                elif t.side == "SELL" and mark_price <= t.take_profit:
-                    should_close = True
-                    close_reason = "Take Profit"
-            
-            # Auto-close if TP/SL hit
-            if should_close:
-                try:
-                    # Calculate profit/loss
-                    if t.side == "BUY":
-                        profit_loss = (mark_price - t.entry_price) * t.quantity * (t.leverage or 1)
-                    else:  # SELL
-                        profit_loss = (t.entry_price - mark_price) * t.quantity * (t.leverage or 1)
-                    
-                    profit_loss_percent = (profit_loss / t.total_value) * 100 if t.total_value else 0
-                    
-                    # Update trade
-                    t.exit_price = mark_price
-                    t.profit_loss = profit_loss
-                    t.profit_loss_percent = profit_loss_percent
-                    t.is_win = profit_loss > 0
-                    t.status = "CLOSED"
-                    t.closed_at = datetime.utcnow()
-                    
-                    # Try to cancel SL/TP orders on Binance if they exist
-                    if not settings.BINANCE_PAPER_TRADING and binance_service.api_key:
-                        try:
-                            if t.sl_order_id:
-                                await binance_service.cancel_order(t.symbol, t.sl_order_id)
-                            if t.tp_order_id:
-                                await binance_service.cancel_order(t.symbol, t.tp_order_id)
-                        except Exception as e:
-                            logger.warning(f"Failed to cancel SL/TP orders for trade {t.id}: {e}")
-                    
-                    db.commit()
-                    logger.info(f"Auto-closed trade {t.id} ({t.symbol}) - {close_reason} at ${mark_price:.2f}, P/L: ${profit_loss:.2f}")
-                    auto_closed.append({"id": t.id, "symbol": t.symbol, "reason": close_reason})
-                    continue  # Skip adding to positions list
-                except Exception as e:
-                    logger.error(f"Failed to auto-close trade {t.id}: {e}")
-                    db.rollback()
+            # COOLDOWN PERIOD: Don't auto-close trades that are less than 10 seconds old
+            # This prevents immediate auto-close due to price fluctuations right after execution
+            # Both datetimes are timezone-aware: created_at from DB (DateTime(timezone=True)) and now_utc
+            now_utc = datetime.now(timezone.utc)
+            trade_age_seconds = (now_utc - t.created_at).total_seconds()
+            if trade_age_seconds < 10:
+                # Trade too new, skip auto-close check
+                logger.debug(f"Trade {t.id} too new ({trade_age_seconds:.1f}s), skipping auto-close check")
+                # Still add to positions list below
+            else:
+                # AUTO-CLOSE CHECK: Check if TP or SL is hit (only for trades older than 10 seconds)
+                should_close = False
+                close_reason = None
+                
+                # Minimum distance buffer: TP/SL must be at least 0.5% away from entry price
+                min_distance_percent = 0.5
+                min_distance = t.entry_price * (min_distance_percent / 100)
+                
+                if t.stop_loss and mark_price:
+                    # Validate SL distance from entry
+                    sl_distance = abs(t.stop_loss - t.entry_price)
+                    if sl_distance < min_distance:
+                        logger.warning(f"Trade {t.id} has SL too close to entry ({sl_distance:.2f} < {min_distance:.2f}), ignoring SL")
+                    else:
+                        if t.side == "BUY" and mark_price <= t.stop_loss:
+                            should_close = True
+                            close_reason = "Stop Loss"
+                        elif t.side == "SELL" and mark_price >= t.stop_loss:
+                            should_close = True
+                            close_reason = "Stop Loss"
+                
+                if t.take_profit and mark_price:
+                    # Validate TP distance from entry
+                    tp_distance = abs(t.take_profit - t.entry_price)
+                    if tp_distance < min_distance:
+                        logger.warning(f"Trade {t.id} has TP too close to entry ({tp_distance:.2f} < {min_distance:.2f}), ignoring TP")
+                    else:
+                        if t.side == "BUY" and mark_price >= t.take_profit:
+                            should_close = True
+                            close_reason = "Take Profit"
+                        elif t.side == "SELL" and mark_price <= t.take_profit:
+                            should_close = True
+                            close_reason = "Take Profit"
+                
+                # Auto-close if TP/SL hit
+                if should_close:
+                    try:
+                        # Calculate profit/loss
+                        if t.side == "BUY":
+                            profit_loss = (mark_price - t.entry_price) * t.quantity * (t.leverage or 1)
+                        else:  # SELL
+                            profit_loss = (t.entry_price - mark_price) * t.quantity * (t.leverage or 1)
+                        
+                        profit_loss_percent = (profit_loss / t.total_value) * 100 if t.total_value else 0
+                        
+                        # Update trade
+                        t.exit_price = mark_price
+                        t.profit_loss = profit_loss
+                        t.profit_loss_percent = profit_loss_percent
+                        t.is_win = profit_loss > 0
+                        t.status = "CLOSED"
+                        t.closed_at = datetime.now(timezone.utc)
+                        
+                        # Try to cancel SL/TP orders on Binance if they exist
+                        if not settings.BINANCE_PAPER_TRADING and binance_service.api_key:
+                            try:
+                                if t.sl_order_id:
+                                    await binance_service.cancel_order(t.symbol, t.sl_order_id)
+                                if t.tp_order_id:
+                                    await binance_service.cancel_order(t.symbol, t.tp_order_id)
+                            except Exception as e:
+                                logger.warning(f"Failed to cancel SL/TP orders for trade {t.id}: {e}")
+                        
+                        db.commit()
+                        logger.info(f"Auto-closed trade {t.id} ({t.symbol}) - {close_reason} at ${mark_price:.2f}, P/L: ${profit_loss:.2f}")
+                        auto_closed.append({"id": t.id, "symbol": t.symbol, "reason": close_reason})
+                        continue  # Skip adding to positions list
+                    except Exception as e:
+                        logger.error(f"Failed to auto-close trade {t.id}: {e}")
+                        db.rollback()
 
+            # Continue to add position to list (if not auto-closed)
             size = t.quantity
             entry_price = t.entry_price
             break_even_price = entry_price  # simplified
@@ -394,6 +465,9 @@ async def get_positions(
                     "stop_loss": t.stop_loss,
                     "take_profit": t.take_profit,
                     "created_at": t.created_at.isoformat(),
+                    "trading_mode": t.trading_mode.value if t.trading_mode else None,
+                    "ai_confidence": t.ai_confidence,
+                    "ai_reason": t.ai_reason
                 }
             )
 
@@ -433,7 +507,10 @@ async def get_trade_history(
                     "is_win": t.is_win,
                     "status": t.status,
                     "leverage": t.leverage,
-                    "trading_mode": t.trading_mode,
+                    "trading_mode": t.trading_mode.value if t.trading_mode else None,
+                    "ai_confidence": t.ai_confidence,
+                    "ai_reason": t.ai_reason,
+                    "ai_model": t.ai_model,
                     "created_at": t.created_at.isoformat(),
                     "closed_at": t.closed_at.isoformat() if t.closed_at else None
                 }

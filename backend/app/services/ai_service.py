@@ -260,19 +260,30 @@ Provide exactly {limit} recommendations in this JSON format:
    - SELL: RSI > 50, MACD < Signal OR Price < MA20
    - STRONG SELL: RSI > 65, MACD bearish cross, Price < MA20, High volume
 
-3. ENTRY/TARGET/STOP LOSS:
-   - Entry: Current price ± 0.5% (tight range)
-   - Target: 2-5% profit for scalper/aggressive, 5-15% for normal/longhold
-   - Stop Loss: 2-3% below entry for BUY, 2-3% above entry for SELL
-   - NEVER set stop loss that risks more than 5%
+3. ENTRY/TARGET/STOP LOSS (MUST BE CLEAR AND SPECIFIC):
+   - Entry: Current price ± 0.5% (format: "$XX,XXX.XX" or "$X.XXXX" for small prices)
+   - Target: Calculate specific price based on mode:
+     * Scalper/Aggressive: 3% profit (BUY: entry * 1.03, SELL: entry * 0.97)
+     * Normal: 8% profit (BUY: entry * 1.08, SELL: entry * 0.92)
+     * Longhold: 15% profit (BUY: entry * 1.15, SELL: entry * 0.85)
+   - Stop Loss: Calculate specific price:
+     * Scalper/Aggressive: 2% risk (BUY: entry * 0.98, SELL: entry * 1.02)
+     * Normal: 3% risk (BUY: entry * 0.97, SELL: entry * 1.03)
+     * Longhold: 5% risk (BUY: entry * 0.95, SELL: entry * 1.05)
+   - Format: "$XX,XXX.XX" for prices >= $1000, "$XX.XX" for prices >= $1, "$X.XXXX" for prices < $1
+   - NEVER use vague terms like "Market dependent" or "Set 2-5% below entry"
+   - ALWAYS provide exact calculated prices
 
-4. REASON FORMAT:
-   - Start with KEY indicators: "RSI 28 (oversold), MACD bullish..."
-   - Max 100 characters
+4. REASON FORMAT (MUST BE CLEAR AND INFORMATIVE):
+   - Include: Key indicators with actual values, entry price, target price, stop loss
+   - Format: "RSI 32 (oversold), MACD bullish cross +12. Price: $95,000. Entry: $95,200, Target: $102,816 (+8%), Stop: $92,344 (-3%)"
+   - Max 150 characters
    - Be specific: use actual values, not vague terms
    - Examples:
-     ✅ "RSI 32 oversold, MACD cross +12, MA20>MA50 uptrend"
+     ✅ "RSI 32 oversold, MACD +12. Entry: $95,200, TP: $102,816 (+8%), SL: $92,344 (-3%)"
+     ✅ "Price -2.5% 24h, bearish. Entry: $84,500, TP: $77,740 (-8%), SL: $87,035 (+3%)"
      ❌ "Good momentum, looks bullish"
+     ❌ "Market dependent"
 
 5. QUALITY OVER QUANTITY:
    - Only recommend if confidence >= 65%
@@ -433,11 +444,43 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
                                 logger.warning(f"Invalid signal '{rec.get('signal')}' for {rec.get('symbol')}, skipping")
                                 continue
                             
-                            # Validate reason (must not be empty or too generic)
+                            # Validate reason (must not be empty, too generic, or too short)
                             reason = rec.get('reason', '').strip()
-                            if len(reason) < 20:
+                            if len(reason) < 30:
                                 logger.warning(f"Reason too short for {rec.get('symbol')}: '{reason}', skipping")
                                 continue
+                            
+                            # Reject generic/vague reasons
+                            generic_terms = ['good momentum', 'looks bullish', 'looks bearish', 'market dependent', 'wait for', 'technical analysis']
+                            if any(term in reason.lower() for term in generic_terms) and len(reason) < 50:
+                                logger.warning(f"Reason too generic for {rec.get('symbol')}: '{reason}', skipping")
+                                continue
+                            
+                            # Validate and format entry_price, target_price, stop_loss
+                            # Ensure they are clear and specific (not vague)
+                            entry_price = rec.get('entry_price', '')
+                            target_price = rec.get('target_price', '')
+                            stop_loss = rec.get('stop_loss', '')
+                            
+                            # Reject vague entries
+                            vague_terms = ['market dependent', 'calculate from entry', 'set 2-5%', 'below entry', 'above entry', 'depend on']
+                            if any(term in str(entry_price).lower() for term in vague_terms):
+                                logger.warning(f"Entry price too vague for {rec.get('symbol')}: '{entry_price}', skipping")
+                                continue
+                            if any(term in str(target_price).lower() for term in vague_terms):
+                                logger.warning(f"Target price too vague for {rec.get('symbol')}: '{target_price}', skipping")
+                                continue
+                            if any(term in str(stop_loss).lower() for term in vague_terms):
+                                logger.warning(f"Stop loss too vague for {rec.get('symbol')}: '{stop_loss}', skipping")
+                                continue
+                            
+                            # Ensure prices are formatted with $ sign if not already
+                            if entry_price and not str(entry_price).startswith('$'):
+                                rec['entry_price'] = f"${entry_price}" if entry_price else entry_price
+                            if target_price and not str(target_price).startswith('$'):
+                                rec['target_price'] = f"${target_price}" if target_price else target_price
+                            if stop_loss and not str(stop_loss).startswith('$'):
+                                rec['stop_loss'] = f"${stop_loss}" if stop_loss else stop_loss
                             
                             # Add color coding based on signal
                             rec['color'] = self._get_color_for_signal(rec['signal'])
@@ -554,19 +597,100 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
                 signal = "SELL"
                 confidence = 70
             
+            # Calculate clear Entry, TP, SL based on current price
+            current_price = float(coin.get('raw_price', coin.get('price', '0').replace('$', '').replace(',', '')) or 0)
+            if current_price == 0:
+                # Try to parse from price string
+                price_str = str(coin.get('price', '0')).replace('$', '').replace(',', '').strip()
+                current_price = float(price_str) if price_str else 0
+            
+            if current_price > 0:
+                # Format entry price (2-4 decimals based on price level)
+                if current_price >= 1000:
+                    entry_price = f"${current_price:,.2f}"
+                elif current_price >= 1:
+                    entry_price = f"${current_price:.2f}"
+                else:
+                    entry_price = f"${current_price:.4f}"
+                
+                # Calculate TP and SL based on mode and signal
+                if signal in ['STRONG BUY', 'BUY']:
+                    # BUY: TP above, SL below
+                    if mode in ['scalper', 'aggressive']:
+                        tp_percent = 3.0  # 3% profit target
+                        sl_percent = 2.0  # 2% stop loss
+                    elif mode == 'normal':
+                        tp_percent = 8.0  # 8% profit target
+                        sl_percent = 3.0  # 3% stop loss
+                    else:  # longhold
+                        tp_percent = 15.0  # 15% profit target
+                        sl_percent = 5.0   # 5% stop loss
+                    
+                    target_price = current_price * (1 + tp_percent / 100)
+                    stop_loss = current_price * (1 - sl_percent / 100)
+                    
+                elif signal in ['STRONG SELL', 'SELL']:
+                    # SELL: TP below, SL above
+                    if mode in ['scalper', 'aggressive']:
+                        tp_percent = 3.0
+                        sl_percent = 2.0
+                    elif mode == 'normal':
+                        tp_percent = 8.0
+                        sl_percent = 3.0
+                    else:  # longhold
+                        tp_percent = 15.0
+                        sl_percent = 5.0
+                    
+                    target_price = current_price * (1 - tp_percent / 100)
+                    stop_loss = current_price * (1 + sl_percent / 100)
+                else:
+                    # HOLD: No clear direction, use current price as entry
+                    entry_price = f"${current_price:,.2f}" if current_price >= 1 else f"${current_price:.4f}"
+                    target_price = current_price * 1.05  # 5% above
+                    stop_loss = current_price * 0.95     # 5% below
+                
+                # Format TP and SL
+                if target_price >= 1000:
+                    target_price_str = f"${target_price:,.2f}"
+                elif target_price >= 1:
+                    target_price_str = f"${target_price:.2f}"
+                else:
+                    target_price_str = f"${target_price:.4f}"
+                
+                if stop_loss >= 1000:
+                    stop_loss_str = f"${stop_loss:,.2f}"
+                elif stop_loss >= 1:
+                    stop_loss_str = f"${stop_loss:.2f}"
+                else:
+                    stop_loss_str = f"${stop_loss:.4f}"
+                
+                # Create clear reason
+                if signal in ['STRONG BUY', 'BUY']:
+                    reason = f"Price down {abs(change):.2f}% 24h. Potential reversal. Entry: {entry_price}, Target: {target_price_str} (+{tp_percent:.0f}%), Stop: {stop_loss_str} (-{sl_percent:.0f}%)"
+                elif signal in ['STRONG SELL', 'SELL']:
+                    reason = f"Price down {abs(change):.2f}% 24h. Bearish momentum. Entry: {entry_price}, Target: {target_price_str} (-{tp_percent:.0f}%), Stop: {stop_loss_str} (+{sl_percent:.0f}%)"
+                else:
+                    reason = f"Price change {change:+.2f}% 24h. Consolidation phase. Wait for clearer signal."
+            else:
+                # Fallback if price parsing fails
+                entry_price = str(coin.get('price', 'N/A'))
+                target_price_str = "Calculate from entry"
+                stop_loss_str = "Set 2-3% from entry"
+                reason = f"Technical analysis: {change:+.2f}% 24h change. Check current price for entry."
+            
             recommendations.append({
                 "symbol": symbol,
                 "name": self._get_coin_name(symbol),
                 "signal": signal,
                 "confidence": confidence,
-                "reason": f"Technical analysis: {change:+.2f}% 24h change, momentum indicator",
+                "reason": reason,
                 "riskLevel": self._get_risk_level(mode),
                 "color": self._get_color_for_signal(signal),
                 "timeframe": self._get_timeframe(mode),
                 "leverage": self._get_leverage(mode),
-                "entry_price": coin['price'],
-                "target_price": "Market dependent",
-                "stop_loss": "Set 2-5% below entry"
+                "entry_price": entry_price,
+                "target_price": target_price_str if current_price > 0 else "Calculate from entry",
+                "stop_loss": stop_loss_str if current_price > 0 else "Set 2-3% from entry"
             })
         
         return recommendations

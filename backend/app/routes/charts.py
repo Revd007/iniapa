@@ -29,7 +29,8 @@ async def get_klines(
             chart_data = await mt5_service.get_chart_data(symbol, interval.upper(), limit)
         else:
             binance_service = request.app.state.binance_service
-            # Ensure symbol has USDT suffix
+            # Normalize symbol: remove /USDT or /USD, then add USDT
+            symbol = symbol.replace('/USDT', '').replace('/USD', '').replace('USDT', '').upper()
             if not symbol.endswith("USDT"):
                 symbol = f"{symbol}USDT"
             # Get chart data
@@ -76,45 +77,48 @@ async def get_chart_data(
                 "data": chart_data,
             }
 
-        binance_service = request.app.state.binance_service
+        else:
+            binance_service = request.app.state.binance_service
 
-        if not symbol.endswith("USDT"):
-            symbol = f"{symbol}USDT"
+            # Normalize symbol: remove /USDT or /USD, then add USDT
+            symbol = symbol.replace('/USDT', '').replace('/USD', '').replace('USDT', '').upper()
+            if not symbol.endswith("USDT"):
+                symbol = f"{symbol}USDT"
 
-        # Get klines
-        klines = await binance_service.get_klines(symbol, interval, limit)
-        
-        if not klines:
+            # Get klines
+            klines = await binance_service.get_klines(symbol, interval, limit)
+            
+            if not klines:
+                return {
+                    "success": True,
+                    "symbol": symbol,
+                    "data": []
+                }
+            
+            # Format for chart
+            chart_data = []
+            for kline in klines:
+                close_price = float(kline[4])
+                chart_data.append({
+                    "time": int(kline[0]),
+                    "price": close_price,
+                    "open": float(kline[1]),
+                    "high": float(kline[2]),
+                    "low": float(kline[3]),
+                    "close": close_price,
+                    "volume": float(kline[5])
+                })
+            
+            # Calculate indicators
+            if len(chart_data) >= 50:
+                chart_data = calculate_indicators(chart_data)
+            
             return {
                 "success": True,
                 "symbol": symbol,
-                "data": []
+                "interval": interval,
+                "data": chart_data
             }
-        
-        # Format for chart
-        chart_data = []
-        for kline in klines:
-            close_price = float(kline[4])
-            chart_data.append({
-                "time": int(kline[0]),
-                "price": close_price,
-                "open": float(kline[1]),
-                "high": float(kline[2]),
-                "low": float(kline[3]),
-                "close": close_price,
-                "volume": float(kline[5])
-            })
-        
-        # Calculate indicators
-        if len(chart_data) >= 50:
-            chart_data = calculate_indicators(chart_data)
-        
-        return {
-            "success": True,
-            "symbol": symbol,
-            "interval": interval,
-            "data": chart_data
-        }
         
     except Exception as e:
         logger.error(f"Failed to get chart data for {symbol}: {str(e)}")
@@ -248,6 +252,8 @@ async def get_realtime_price(symbol: str, request: Request):
     try:
         binance_service = request.app.state.binance_service
         
+        # Normalize symbol: remove /USDT or /USD, then add USDT
+        symbol = symbol.replace('/USDT', '').replace('/USD', '').replace('USDT', '').upper()
         if not symbol.endswith("USDT"):
             symbol = f"{symbol}USDT"
         

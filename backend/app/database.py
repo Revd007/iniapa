@@ -1,105 +1,200 @@
 """
-Database configuration and session management
-Uses SQLite for simplicity with SQLAlchemy ORM
+Database configuration for PostgreSQL
+Production-ready with connection pooling and proper error handling
 """
 
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from datetime import datetime
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import QueuePool
+from contextlib import contextmanager
+import logging
+
 from app.config import settings
 
-# Create database engine with optimizations for faster startup
+logger = logging.getLogger(__name__)
+
+
+# Create engine with connection pooling for production
 engine = create_engine(
     settings.DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {},
-    pool_pre_ping=False,  # Disable connection health checks for faster startup
-    echo=False,  # Disable SQL logging for faster startup
+    poolclass=QueuePool,
+    pool_size=20,  # Number of connections to keep open
+    max_overflow=40,  # Additional connections when pool is full
+    pool_pre_ping=True,  # Verify connections before using
+    pool_recycle=3600,  # Recycle connections after 1 hour
+    echo=settings.DEBUG,  # Log SQL queries in debug mode
 )
 
-# Create session factory
+# Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Base class for models
-Base = declarative_base()
 
-
-class Trade(Base):
-    """Trade model for storing executed trades"""
-    __tablename__ = "trades"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    symbol = Column(String, index=True)
-    side = Column(String)  # BUY or SELL
-    order_type = Column(String)  # MARKET, LIMIT, etc.
-    quantity = Column(Float)
-    price = Column(Float)
-    total_value = Column(Float)
-    leverage = Column(Float, default=1.0)
-    
-    # Trade outcome
-    entry_price = Column(Float)
-    exit_price = Column(Float, nullable=True)
-    profit_loss = Column(Float, nullable=True)
-    profit_loss_percent = Column(Float, nullable=True)
-    is_win = Column(Boolean, nullable=True)
-    
-    # Metadata
-    trading_mode = Column(String)
-    ai_confidence = Column(Float, nullable=True)
-    ai_reason = Column(String, nullable=True)
-    
-    status = Column(String, default="OPEN")  # OPEN, CLOSED, CANCELLED
-    created_at = Column(DateTime, default=datetime.utcnow)
-    closed_at = Column(DateTime, nullable=True)
-    
-    # Binance order ID
-    binance_order_id = Column(String, nullable=True)
-    
-    # Stop Loss / Take Profit
-    stop_loss = Column(Float, nullable=True)
-    take_profit = Column(Float, nullable=True)
-    sl_order_id = Column(String, nullable=True)
-    tp_order_id = Column(String, nullable=True)
-
-
-class PerformanceMetric(Base):
-    """Performance metrics model for tracking daily statistics"""
-    __tablename__ = "performance_metrics"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    date = Column(DateTime, default=datetime.utcnow, index=True)
-    
-    # Daily metrics
-    total_trades = Column(Integer, default=0)
-    winning_trades = Column(Integer, default=0)
-    losing_trades = Column(Integer, default=0)
-    win_rate = Column(Float, default=0.0)
-    
-    total_profit = Column(Float, default=0.0)
-    total_loss = Column(Float, default=0.0)
-    net_profit = Column(Float, default=0.0)
-    
-    # Risk metrics
-    avg_risk_reward_ratio = Column(Float, default=0.0)
-    max_drawdown = Column(Float, default=0.0)
-    sharpe_ratio = Column(Float, nullable=True)
-    
-    # Trading mode breakdown
-    trading_mode = Column(String, nullable=True)
-
-
-def init_db():
-    """Initialize database tables - optimized for fast startup"""
-    # Use checkfirst=True to skip if tables already exist (faster)
-    Base.metadata.create_all(bind=engine, checkfirst=True)
-
-
-def get_db():
-    """Get database session"""
+def get_db() -> Session:
+    """
+    Dependency for FastAPI to get database session
+    Automatically handles commit/rollback and closes session
+    """
     db = SessionLocal()
     try:
         yield db
+    except Exception as e:
+        logger.error(f"Database error: {e}")
+        db.rollback()
+        raise
     finally:
         db.close()
 
+
+@contextmanager
+def get_db_context():
+    """
+    Context manager for database session outside of FastAPI
+    Usage:
+        with get_db_context() as db:
+            # do stuff
+    """
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception as e:
+        logger.error(f"Database error: {e}")
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def migrate_market_symbols_schema(db):
+    """Migrate market_symbols table schema if needed"""
+    try:
+        from sqlalchemy import text
+        
+        # Check and update symbol column
+        result = db.execute(text("""
+            SELECT character_maximum_length
+            FROM information_schema.columns
+            WHERE table_name = 'market_symbols' AND column_name = 'symbol'
+        """))
+        row = result.fetchone()
+        if row and row[0] and row[0] < 30:
+            logger.info("Updating market_symbols.symbol to VARCHAR(30)...")
+            db.execute(text("ALTER TABLE market_symbols ALTER COLUMN symbol TYPE VARCHAR(30)"))
+        
+        # Check and update base_asset column
+        result = db.execute(text("""
+            SELECT character_maximum_length
+            FROM information_schema.columns
+            WHERE table_name = 'market_symbols' AND column_name = 'base_asset'
+        """))
+        row = result.fetchone()
+        if row and row[0] and row[0] < 20:
+            logger.info("Updating market_symbols.base_asset to VARCHAR(20)...")
+            db.execute(text("ALTER TABLE market_symbols ALTER COLUMN base_asset TYPE VARCHAR(20)"))
+        
+        db.commit()
+        logger.info("✅ Market symbols schema migration completed")
+    except Exception as e:
+        logger.warning(f"Schema migration check failed (may not exist yet): {e}")
+        db.rollback()
+
+def init_db():
+    """
+    Initialize database:
+    - Create all tables
+    - Create default user if not exists
+    - Seed initial data
+    """
+    from app.models import Base, User
+    
+    logger.info("Initializing database...")
+    
+    # Create all tables
+    Base.metadata.create_all(bind=engine)
+    logger.info("✓ Database tables created")
+    
+    # Migrate market_symbols schema if needed
+    with get_db_context() as db:
+        migrate_market_symbols_schema(db)
+    
+    # Create default user for development
+    with get_db_context() as db:
+        default_user = db.query(User).filter_by(id=1).first()
+        if not default_user:
+            default_user = User(
+                id=1,
+                email="trader@tradanalisa.com",
+                username="trader",
+                is_active=True,
+                is_admin=True
+            )
+            db.add(default_user)
+            db.commit()
+            logger.info("✓ Default user created")
+        else:
+            logger.info("✓ Default user already exists")
+    
+    logger.info("✅ Database initialization complete")
+
+
+def check_db_connection():
+    """Check if database connection is working"""
+    try:
+        # Test connection dengan simple query (SQLAlchemy 2.0 syntax)
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1 as test"))
+            result.fetchone()
+        logger.info("✓ Database connection successful")
+        return True
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"✗ Database connection failed: {error_msg}")
+        
+        # Provide helpful error messages
+        if "password authentication failed" in error_msg:
+            logger.error("💡 Password authentication failed. Check:")
+            logger.error("   1. Password di .env file (tulis password asli, akan auto-encode)")
+            logger.error("   2. Password di PostgreSQL harus match")
+            logger.error("   3. Run: python setup_database.py untuk update password")
+        elif "could not translate host name" in error_msg:
+            logger.error("💡 Host resolution failed. Check DATABASE_URL format.")
+        elif "does not exist" in error_msg.lower():
+            logger.error("💡 Database or user does not exist. Run: python setup_database.py")
+        
+        return False
+
+
+# Event listeners for connection pool monitoring
+@event.listens_for(engine, "connect")
+def receive_connect(dbapi_conn, connection_record):
+    """Log when new connection is created"""
+    logger.debug("Database connection established")
+
+
+@event.listens_for(engine, "checkout")
+def receive_checkout(dbapi_conn, connection_record, connection_proxy):
+    """Log when connection is checked out from pool"""
+    logger.debug("Connection checked out from pool")
+
+
+# Import models after engine is created (for backwards compatibility)
+from app.models import (
+    User, Trade, RobotConfig, PerformanceMetric, 
+    MarketSymbol, APICredential
+)
+
+__all__ = [
+    "engine",
+    "SessionLocal",
+    "get_db",
+    "get_db_context",
+    "init_db",
+    "check_db_connection",
+    "User",
+    "Trade",
+    "RobotConfig",
+    "PerformanceMetric",
+    "MarketSymbol",
+    "APICredential",
+]

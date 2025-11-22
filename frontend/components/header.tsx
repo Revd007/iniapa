@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { accountApi, type AccountSummary } from '@/lib/api';
+import SettingsModal from './settings-modal';
 
 interface HeaderProps {
   assetClass?: 'stocks' | 'forex' | 'crypto'
@@ -19,21 +20,27 @@ export default function Header({ assetClass }: HeaderProps) {
   const [env, setEnv] = useState<EnvironmentType>('demo')
   const [balance, setBalance] = useState<number>(0)
   const [summary, setSummary] = useState<AccountSummary | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
 
   const loadSummary = async (targetEnv?: EnvironmentType) => {
     try {
       const asset = assetClass === 'forex' ? 'forex' : 'crypto'
-      const data = await accountApi.getSummary(targetEnv, asset)
+      // Always send env parameter (default to 'demo' if not specified)
+      const envToUse = targetEnv || 'demo'
+      const data = await accountApi.getSummary(envToUse, asset)
       setSummary(data)
-      setEnv(data.environment)
-      setBalance(data.equity)
+      setEnv(data.environment || envToUse)
+      setBalance(data.equity || 0)
     } catch (e) {
       console.error('Failed to load account summary', e)
+      // Set default values on error
+      setBalance(0)
+      setEnv('demo')
     }
   }
 
   useEffect(() => {
-    loadSummary()
+    loadSummary('demo') // Always start with demo mode
   }, [assetClass])
 
   return (
@@ -80,16 +87,28 @@ export default function Header({ assetClass }: HeaderProps) {
             </p>
             {/* Use fixed en-US locale to avoid SSR/CSR mismatch like 0.00 vs 0,00 */}
             <p className="text-lg font-bold text-white">
-              ${balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              ${(balance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
           </div>
 
           {/* Settings pill */}
-          <button className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-full text-xs font-medium border border-slate-700">
-            Settings
+          <button 
+            onClick={() => setShowSettings(true)}
+            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-full text-xs font-medium border border-slate-700 transition"
+          >
+            ⚙️ Settings
           </button>
         </div>
       </div>
+
+      {/* Settings Modal */}
+      <SettingsModal 
+        isOpen={showSettings} 
+        onClose={() => {
+          setShowSettings(false)
+          loadSummary(env) // Reload balance after settings change
+        }} 
+      />
     </header>
   )
 }

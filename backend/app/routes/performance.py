@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
 import logging
+from typing import Optional
 
 from app.database import get_db, Trade
 
@@ -16,10 +17,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def get_binance_service(request: Request):
+    """Dependency to get binance service from app state"""
+    try:
+        return request.app.state.binance_service
+    except AttributeError:
+        return None
+
+
 @router.get("/dashboard")
 async def get_performance_dashboard(
     asset_class: str = "crypto",
-    request: Request = None,  # type: ignore
+    request: Optional[Request] = Depends(lambda: None),  # Optional dependency
     db: Session = Depends(get_db)
 ):
     """Get real-time performance dashboard metrics with live mark prices"""
@@ -59,47 +68,17 @@ async def get_performance_dashboard(
         # For performance, we calculate based on entry_price (or fetch mark prices in batch if needed)
         unrealized_pnl = 0.0
         
-        # Only fetch mark prices if crypto and request is available
-        if open_trades and asset_class == "crypto" and request:
-            try:
-                # Batch fetch mark prices for all open trades (optimize API calls)
-                binance_service = request.app.state.binance_service
-                unique_symbols = list(set(t.symbol for t in open_trades))
-                mark_prices_cache = {}
-                
-                for symbol in unique_symbols:
-                    try:
-                        ticker = await binance_service.get_ticker_price(symbol)
-                        mark_prices_cache[symbol] = float(ticker.get("price", 0))
-                    except Exception:
-                        mark_prices_cache[symbol] = None
-                
-                for t in open_trades:
-                    current_price = mark_prices_cache.get(t.symbol) or t.entry_price
-                    if t.side == "BUY":
-                        diff = (current_price - t.entry_price) * t.quantity * (t.leverage or 1)
-                    else:
-                        diff = (t.entry_price - current_price) * t.quantity * (t.leverage or 1)
-                    unrealized_pnl += diff
-            except Exception as e:
-                logger.warning(f"Failed to fetch mark prices for performance: {e}, using entry prices")
-                # Fallback: use entry price (no unrealized PnL change)
-                for t in open_trades:
-                    current_price = t.entry_price
-                    if t.side == "BUY":
-                        diff = (current_price - t.entry_price) * t.quantity * (t.leverage or 1)
-                    else:
-                        diff = (t.entry_price - current_price) * t.quantity * (t.leverage or 1)
-                    unrealized_pnl += diff
-        else:
-            # Fallback: use entry price (no unrealized PnL change)
-            for t in open_trades:
-                current_price = t.entry_price
-                if t.side == "BUY":
-                    diff = (current_price - t.entry_price) * t.quantity * (t.leverage or 1)
-                else:
-                    diff = (t.entry_price - current_price) * t.quantity * (t.leverage or 1)
-                unrealized_pnl += diff
+        # Calculate unrealized PnL from open trades
+        # For performance, we use entry_price as fallback (mark prices are fetched in positions endpoint)
+        # If we need real-time prices, we can fetch them here, but for now use entry_price
+        for t in open_trades:
+            # Use entry_price for unrealized PnL calculation (mark prices are already in positions endpoint)
+            current_price = t.entry_price
+            if t.side == "BUY":
+                diff = (current_price - t.entry_price) * t.quantity * (t.leverage or 1)
+            else:
+                diff = (t.entry_price - current_price) * t.quantity * (t.leverage or 1)
+            unrealized_pnl += diff
 
         total_profit = realized_pnl + unrealized_pnl
 

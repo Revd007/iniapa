@@ -96,8 +96,18 @@ export default function OpenPositionsBanner() {
           {positions.map((p) => (
             <tr key={p.id} className="border-b border-slate-900/80 hover:bg-slate-800/30">
               <td className="py-1 pr-2">
-                <div className="flex flex-col">
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-1">
                   <span className="font-semibold text-xs text-white">{p.symbol}</span>
+                    {p.ai_confidence && (
+                      <span className="text-[8px] px-1 py-0.5 bg-purple-900/50 text-purple-300 rounded border border-purple-700">
+                        🤖 Robot
+                      </span>
+                    )}
+                  </div>
+                  {p.trading_mode && (
+                    <span className="text-[8px] text-slate-500 capitalize">{p.trading_mode}</span>
+                  )}
                   <span className="text-[9px] text-slate-500">{p.side}</span>
                 </div>
               </td>

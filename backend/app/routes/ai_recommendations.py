@@ -1,6 +1,7 @@
 """
 AI Recommendations Routes
-Endpoints for AI-powered trading recommendations using DeepSeek
+Endpoints for AI-powered trading recommendations using DeepSeek/Qwen
+Hanya analyze symbols yang ada di market overview (top 5) untuk efisiensi token
 """
 
 from fastapi import APIRouter, HTTPException, Request, Query, Depends
@@ -10,7 +11,8 @@ import logging
 
 from app.services.ai_service import AIRecommendationService
 from app.config import settings
-from app.database import get_db, Trade
+from app.database import get_db
+from app.models import Trade, MarketSymbol, AssetClass
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +27,15 @@ async def get_ai_recommendations(
     asset_class: str = Query("crypto", description="Asset class: crypto, stocks, forex"),
     limit: int = Query(6, description="Number of recommendations", ge=1, le=12),
     ai_model: str = Query("deepseek", description="AI model: deepseek or qwen"),
+    pinned_symbols: Optional[str] = Query(None, description="Comma-separated list of pinned symbols (e.g., 'BTC/USDT,ETH/USDT')"),
     db: Session = Depends(get_db),
 ):
     """
-    Get AI-powered trading recommendations from DeepSeek or Qwen
+    Get AI-powered trading recommendations
+    NOW: Follows user's pinned symbols from market overview!
+    
+    If pinned_symbols provided: AI analyzes ONLY those symbols
+    If no pinned_symbols: Falls back to top 5 by volume
     
     Modes:
     - scalper: 1-5min timeframe, very high risk, 5-10x leverage
@@ -46,9 +53,65 @@ async def get_ai_recommendations(
         if mode not in valid_modes:
             raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of: {valid_modes}")
         
-        # Get current market data
-        binance_service = request.app.state.binance_service
-        market_data = await binance_service.get_market_overview(settings.SUPPORTED_SYMBOLS)
+        # Get symbols to analyze
+        if asset_class == "crypto":
+            asset_class_enum = AssetClass.CRYPTO
+            
+            # PRIORITIZE USER'S PINNED SYMBOLS!
+            if pinned_symbols:
+                # Parse pinned symbols (e.g., "BTC/USDT,ETH/USDT" -> ["BTCUSDT", "ETHUSDT"])
+                pinned_list = [
+                    s.strip().replace('/USDT', '').replace('/USD', '').upper() + 'USDT' 
+                    for s in pinned_symbols.split(',') 
+                    if s.strip()
+                ]
+                
+                # Get MarketSymbol objects for pinned symbols
+                symbol_objs = db.query(MarketSymbol).filter(
+                    MarketSymbol.asset_class == asset_class_enum,
+                    MarketSymbol.is_active == True,
+                    MarketSymbol.symbol.in_(pinned_list)
+                ).all()
+                
+                logger.info(f"AI analyzing user's pinned symbols: {[s.symbol for s in symbol_objs]}")
+            else:
+                # Fallback: top 5 by volume (old behavior)
+                symbol_objs = db.query(MarketSymbol).filter(
+                MarketSymbol.asset_class == asset_class_enum,
+                MarketSymbol.is_active == True
+                ).order_by(MarketSymbol.volume_24h.desc()).limit(5).all()
+                
+                logger.info(f"AI analyzing top 5 symbols by volume: {[s.symbol for s in symbol_objs]}")
+            
+            if not symbol_objs:
+                raise HTTPException(status_code=404, detail="No active crypto symbols found. Please sync market first.")
+            
+            # Fetch ticker data untuk top 5 symbols
+            binance_service = request.app.state.binance_service
+            market_data = []
+            
+            for symbol_obj in symbol_objs:
+                try:
+                    ticker = await binance_service.get_24h_ticker(symbol_obj.symbol)
+                    market_data.append({
+                        'symbol': symbol_obj.symbol.replace('USDT', '/USD'),
+                        'price': ticker.get('lastPrice', '0'),
+                        'change': ticker.get('priceChangePercent', '0'),
+                        'volume': ticker.get('quoteVolume', '0'),
+                        'high24h': ticker.get('highPrice', '0'),
+                        'low24h': ticker.get('lowPrice', '0'),
+                        'raw_price': float(ticker.get('lastPrice', 0)),
+                        'raw_change': float(ticker.get('priceChangePercent', 0))
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to fetch ticker for {symbol_obj.symbol}: {e}")
+                    continue
+            
+            if not market_data:
+                raise HTTPException(status_code=404, detail="No market data available for top symbols")
+        else:
+            # Forex/Stocks: belum di-implement (akan di-update nanti)
+            raise HTTPException(status_code=501, detail=f"AI recommendations for {asset_class} not yet implemented")
 
         # Build simple RAG context from recent trade history (memory)
         recent_trades = (

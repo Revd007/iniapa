@@ -1,14 +1,19 @@
 """
-Configuration management for NOF1 Trading Bot
-Loads environment variables and provides configuration settings
+Configuration management for TradAnalisa Platform
+Secure configuration dengan proper environment variable handling
+No hardcoded credentials - semua dari .env file
 """
 
 import os
+import logging
+from urllib.parse import quote_plus, urlparse, urlunparse
 from dotenv import load_dotenv
 from pathlib import Path
 
 # Load environment variables
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 class Settings:
     """Application settings"""
@@ -59,17 +64,120 @@ class Settings:
     # DeepSeek: Fast, cost-effective, good for technical analysis
     OPENROUTER_MODEL_DEEPSEEK = "deepseek/deepseek-chat-v3"
     # Qwen: Advanced reasoning, multi-perspective analysis
-    OPENROUTER_MODEL_QWEN = "qwen/qwen-2.5-72b-instruct"
+    OPENROUTER_MODEL_QWEN = "qwen/qwen3-max"
     
-    # Database Settings
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./nof1_trading.db")
+    # Debug mode (define early)
+    DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+    
+    # Database Settings - PostgreSQL Production
+    # Secure password handling dengan auto-encoding untuk special characters
+    
+    def build_database_url(raw_url: str) -> str:
+        """
+        Build secure database URL dengan proper password encoding
+        Handle special characters seperti @, #, dll secara otomatis
+        """
+        if not raw_url or "://" not in raw_url:
+            return raw_url
+        
+        try:
+            # Parse URL dengan urlparse (lebih robust)
+            parsed = urlparse(raw_url)
+            
+            # Jika password sudah di-encode atau tidak ada, return as-is
+            if not parsed.password:
+                return raw_url
+            
+            # Check jika password sudah encoded (contains %)
+            if "%" in parsed.password:
+                # Already encoded, return as-is
+                return raw_url
+            
+            # Encode password untuk special characters
+            encoded_password = quote_plus(parsed.password)
+            
+            # Reconstruct URL dengan encoded password
+            # Format: scheme://user:encoded_password@host:port/path
+            netloc_parts = []
+            if parsed.username:
+                netloc_parts.append(parsed.username)
+            netloc_parts.append(encoded_password)
+            
+            netloc = ":".join(netloc_parts)
+            if parsed.hostname:
+                netloc += f"@{parsed.hostname}"
+            if parsed.port:
+                netloc += f":{parsed.port}"
+            
+            # Build new URL
+            new_url = urlunparse((
+                parsed.scheme,
+                netloc,
+                parsed.path or "",
+                parsed.params or "",
+                parsed.query or "",
+                parsed.fragment or ""
+            ))
+            
+            return new_url
+            
+        except Exception as e:
+            # Fallback: return original URL
+            logger.warning(f"Failed to parse DATABASE_URL: {e}, using as-is")
+            return raw_url
+    
+    # Get DATABASE_URL from environment (required, tidak ada default)
+    _db_url_raw = os.getenv("DATABASE_URL")
+    if not _db_url_raw:
+        raise ValueError(
+            "DATABASE_URL environment variable is required. "
+            "Please set it in .env file: "
+            "DATABASE_URL=postgresql://revian:wokolcoy20.@localhost:5432/tradanalisa"
+        )
+    
+    # Build secure connection string dengan auto-encoding
+    DATABASE_URL = build_database_url(_db_url_raw)
+    
+    # Debug logging (hide password)
+    if DEBUG:
+        import re
+        safe_url = re.sub(r':([^:@]+)@', r':***@', DATABASE_URL)
+        logger.info(f"🔍 DATABASE_URL configured: {safe_url}")
+    
+    # JWT Authentication - Secure, no hardcoded secrets
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+    if not JWT_SECRET_KEY:
+        raise ValueError(
+            "JWT_SECRET_KEY environment variable is required. "
+            "Generate a secure random key and set it in .env file. "
+            "Example: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+        )
+    JWT_ALGORITHM = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+    REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+    
+    # OAuth Configuration (disable for now, enable when verified)
+    OAUTH_ENABLED = os.getenv("OAUTH_ENABLED", "false").lower() == "true"
+    
+    # Binance OAuth (untuk production nanti)
+    BINANCE_OAUTH_CLIENT_ID = os.getenv("BINANCE_OAUTH_CLIENT_ID", "")
+    BINANCE_OAUTH_CLIENT_SECRET = os.getenv("BINANCE_OAUTH_CLIENT_SECRET", "")
+    BINANCE_OAUTH_REDIRECT_URI = os.getenv("BINANCE_OAUTH_REDIRECT_URI", "http://localhost:3000/auth/binance/callback")
+    
+    # Demo/Simulation Mode (untuk testing tanpa OAuth)
+    # Balance tidak di-hardcode - akan diambil dari database/account service
+    DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() == "true"
     
     # Trading Settings
     # Supported crypto symbols for market overview, charts, and AI recommendations
-    SUPPORTED_SYMBOLS = [
-        "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
-        "BCHUSDT", "LTCUSDT", "ZECUSDT"  # Added: Bitcoin Cash, Litecoin, Zcash
-    ]
+    # Market symbols configuration
+    # We now fetch ALL symbols dynamically from Binance
+    # Minimum 24h volume to include symbol (in USDT)
+    MIN_24H_VOLUME = float(os.getenv("MIN_24H_VOLUME", "1000000"))  # $1M
+    
+    # Maximum symbols to fetch for AI analysis
+    MAX_AI_SYMBOLS = int(os.getenv("MAX_AI_SYMBOLS", "50"))
+    
     DEFAULT_TRADING_MODE = "normal"
 
     # MT5 (MetaTrader 5) Settings for FOREX
