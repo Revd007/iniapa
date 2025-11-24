@@ -37,52 +37,66 @@ class RobotTradingService:
         """Set the Binance service instance"""
         self.binance_service = binance_service
     
-    async def start(self, user_id: int = 1):
+    async def start(self, user_id: int = 1, environment: str = "demo"):
         """Start the robot trading scheduler"""
-        if self.running:
-            logger.warning("Robot is already running")
-            return {"success": False, "message": "Robot is already running"}
+        # If already running, cancel old task first
+        if self.running and self.scan_task:
+            logger.warning("Robot is already running, stopping old task first...")
+            self.running = False
+            self.scan_task.cancel()
+            try:
+                await asyncio.wait_for(self.scan_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            self.scan_task = None
         
-        logger.info(f"🤖 Starting robot trading for user {user_id}")
+        logger.info(f"🤖 Starting robot trading for user {user_id} (environment: {environment})")
         self.running = True
+        
+        # Update environment in database
+        with get_db_context() as db:
+            config = db.query(RobotConfig).filter_by(user_id=user_id).first()
+            if config and environment in ["demo", "live"]:
+                config.environment = environment
+                db.commit()
         
         # Start background scan task
         self.scan_task = asyncio.create_task(self._scan_loop(user_id))
         
-        return {"success": True, "message": "Robot started successfully"}
+        return {"success": True, "message": f"Robot started successfully ({environment} mode)"}
     
-    async def stop(self, user_id: int = 1):
+    async def stop(self, user_id: int = 1, environment: str = "demo"):
         """Stop the robot trading scheduler and update database"""
-        if not self.running:
-            logger.warning("Robot is not running")
-            # Still update database to ensure enabled=False
-            with get_db_context() as db:
-                config = db.query(RobotConfig).filter_by(user_id=user_id).first()
-                if config:
-                    config.enabled = False
-                    db.commit()
-            return {"success": False, "message": "Robot is not running"}
+        logger.info(f"🛑 Stopping robot trading for user {user_id} (environment: {environment})")
         
-        logger.info(f"🛑 Stopping robot trading for user {user_id}")
+        # Set running to False FIRST to stop any ongoing scans
         self.running = False
         
-        # Update database to ensure enabled=False
+        # Update database to ensure enabled=False and update environment
         with get_db_context() as db:
             config = db.query(RobotConfig).filter_by(user_id=user_id).first()
             if config:
                 config.enabled = False
+                if environment in ["demo", "live"]:
+                    config.environment = environment
                 db.commit()
-                logger.info(f"✅ Updated robot config: enabled=False for user {user_id}")
+                logger.info(f"✅ Updated robot config: enabled=False, environment={environment} for user {user_id}")
         
         # Cancel and wait for scan task to finish
-        if self.scan_task:
+        if self.scan_task and not self.scan_task.done():
             logger.info("Cancelling scan task...")
             self.scan_task.cancel()
             try:
-                await self.scan_task
+                # Wait for task to finish (with timeout)
+                await asyncio.wait_for(self.scan_task, timeout=5.0)
             except asyncio.CancelledError:
-                logger.info("Scan task cancelled successfully")
-            self.scan_task = None
+                logger.info("✅ Scan task cancelled successfully")
+            except asyncio.TimeoutError:
+                logger.warning("⚠️ Scan task cancellation timed out, forcing stop")
+            except Exception as e:
+                logger.error(f"Error while cancelling scan task: {e}")
+            finally:
+                self.scan_task = None
         
         logger.info("✅ Robot stopped successfully")
         return {"success": True, "message": "Robot stopped successfully", "enabled": False}
@@ -91,6 +105,11 @@ class RobotTradingService:
         """Main loop that scans market and executes trades"""
         try:
             while self.running:
+                # Check self.running FIRST (most important check)
+                if not self.running:
+                    logger.info("🛑 Robot stopped (self.running=False), exiting scan loop...")
+                    break
+                
                 # Double-check if robot is still enabled in database
                 with get_db_context() as db:
                     config = db.query(RobotConfig).filter_by(user_id=user_id).first()
@@ -99,13 +118,16 @@ class RobotTradingService:
                         self.running = False
                         break
                 
-                # Check again self.running (might have been set to False by stop())
+                # Check again self.running (might have been set to False by stop() or database check)
                 if not self.running:
                     logger.info("🛑 Robot stopped, exiting scan loop...")
                     break
                 
                 try:
                     await self._scan_and_trade(user_id)
+                except asyncio.CancelledError:
+                    logger.info("🛑 Scan cancelled during execution")
+                    break
                 except Exception as e:
                     logger.error(f"Error in scan loop: {e}", exc_info=True)
                 
@@ -125,8 +147,20 @@ class RobotTradingService:
                     scan_interval = config.scan_interval_seconds
                 
                 # Wait before next scan (but check for cancellation periodically)
+                # Use shorter sleep intervals to check for cancellation more frequently
                 try:
-                    await asyncio.sleep(scan_interval)
+                    # Break sleep into smaller chunks to check self.running more often
+                    # Check every 1 second for immediate responsiveness
+                    check_interval = 1
+                    total_slept = 0
+                    while total_slept < scan_interval:
+                        if not self.running:
+                            logger.info("🛑 Robot stopped during sleep, exiting loop...")
+                            break
+                        remaining = scan_interval - total_slept
+                        sleep_time = min(check_interval, remaining)
+                        await asyncio.sleep(sleep_time)
+                        total_slept += sleep_time
                 except asyncio.CancelledError:
                     logger.info("Scan loop sleep cancelled")
                     break
@@ -169,6 +203,11 @@ class RobotTradingService:
     
     async def _scan_and_trade(self, user_id: int):
         """Scan market, get AI recommendations, execute trades (only if enabled)"""
+        # Check if robot is still running before starting scan
+        if not self.running:
+            logger.info("🛑 Robot stopped, skipping scan")
+            return
+        
         logger.info(f"🔍 Robot scanning market for user {user_id}...")
         
         with get_db_context() as db:
@@ -176,6 +215,12 @@ class RobotTradingService:
             config = db.query(RobotConfig).filter_by(user_id=user_id).first()
             if not config or not config.enabled:
                 logger.debug(f"Robot disabled or config not found for user {user_id}")
+                self.running = False
+                return
+            
+            # Check again before executing
+            if not self.running:
+                logger.info("🛑 Robot stopped before scan execution")
                 return
             
             await self._scan_and_trade_internal(user_id, db, config)
@@ -363,7 +408,7 @@ class RobotTradingService:
                 return []
             
             # Get AI models from config
-            ai_models = config.ai_models.split(',') if config.ai_models else ['deepseek']
+            ai_models = config.ai_models.split(',') if config.ai_models else ['qwen']
             
             # Generate recommendations from first AI model
             # Mode determines timeframe: scalper=1-5min, normal=30min-4H, aggressive=15min-1H, longhold=Daily

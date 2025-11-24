@@ -1,6 +1,6 @@
 """
 AI Recommendations Routes
-Endpoints for AI-powered trading recommendations using DeepSeek/Qwen
+Endpoints for AI-powered trading recommendations using Qwen
 Hanya analyze symbols yang ada di market overview (top 5) untuk efisiensi token
 """
 
@@ -26,7 +26,7 @@ async def get_ai_recommendations(
     mode: str = Query("normal", description="Trading mode: scalper, normal, aggressive, longhold"),
     asset_class: str = Query("crypto", description="Asset class: crypto, stocks, forex"),
     limit: int = Query(6, description="Number of recommendations", ge=1, le=12),
-    ai_model: str = Query("deepseek", description="AI model: deepseek or qwen"),
+    ai_model: str = Query("qwen", description="AI model: qwen (deepseek deprecated)"),
     pinned_symbols: Optional[str] = Query(None, description="Comma-separated list of pinned symbols (e.g., 'BTC/USDT,ETH/USDT')"),
     db: Session = Depends(get_db),
 ):
@@ -44,8 +44,7 @@ async def get_ai_recommendations(
     - longhold: Daily-Monthly timeframe, low risk, 1-2x leverage
     
     AI Models:
-    - deepseek: Fast, cost-effective, technical analysis focused
-    - qwen: Advanced reasoning, multi-perspective analysis
+    - qwen: Advanced reasoning, multi-perspective analysis (default)
     """
     try:
         # Validate mode

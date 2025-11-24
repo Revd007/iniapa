@@ -1,14 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { accountApi, type AccountSummary } from '@/lib/api';
+import { accountApi, robotApi, type AccountSummary } from '@/lib/api';
 import SettingsModal from './settings-modal';
 
 interface HeaderProps {
   assetClass?: 'stocks' | 'forex' | 'crypto'
+  onEnvironmentChange?: (env: 'demo' | 'live') => void
 }
 
 type EnvironmentType = 'demo' | 'live'
 
-export default function Header({ assetClass }: HeaderProps) {
+export default function Header({ assetClass, onEnvironmentChange }: HeaderProps) {
   const assetNames = {
     stocks: 'STOCKS',
     forex: 'FOREX',
@@ -27,15 +28,33 @@ export default function Header({ assetClass }: HeaderProps) {
       const asset = assetClass === 'forex' ? 'forex' : 'crypto'
       // Always send env parameter (default to 'demo' if not specified)
       const envToUse = targetEnv || 'demo'
+      
+      // Stop robot before switching environment
+      try {
+        await robotApi.stop(envToUse as 'demo' | 'live')
+        console.log(`✅ Robot stopped before environment switch to ${envToUse}`)
+      } catch (e) {
+        console.warn('Failed to stop robot (may not be running):', e)
+      }
+      
       const data = await accountApi.getSummary(envToUse, asset)
       setSummary(data)
-      setEnv(data.environment || envToUse)
+      const newEnv = data.environment || envToUse
+      setEnv(newEnv)
       setBalance(data.equity || 0)
+      
+      // Notify parent component of environment change
+      if (onEnvironmentChange) {
+        onEnvironmentChange(newEnv)
+      }
     } catch (e) {
       console.error('Failed to load account summary', e)
       // Set default values on error
       setBalance(0)
       setEnv('demo')
+      if (onEnvironmentChange) {
+        onEnvironmentChange('demo')
+      }
     }
   }
 

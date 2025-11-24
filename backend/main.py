@@ -1,19 +1,25 @@
 """
-NOF1 Trading Bot - FastAPI Backend
-Main application entry point with API routes
+TradAnalisa Trading Platform - Production Backend
+OAuth authentication, PostgreSQL database, dynamic symbol sync
+Clean architecture with proper error handling and logging
 """
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from contextlib import asynccontextmanager
 import uvicorn
 from datetime import datetime
 import logging
+import asyncio
 
-from app.routes import market, trading, performance, ai_recommendations, charts, account
+from app.routes import market, trading, performance, ai_recommendations, charts, account, auth, settings, robot, user_settings
 from app.services.binance_service import BinanceService
 from app.services.mt5_service import MT5Service
-from app.database import init_db
+from app.services.market_sync_service import MarketSyncService
+from app.services.robot_trading_service import robot_service
+from app.database import init_db, get_db_context, check_db_connection
+from app.config import settings as app_settings
 
 # Configure logging
 logging.basicConfig(
@@ -25,52 +31,113 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for startup and shutdown events"""
-    # Startup - Optimized for fast startup
-    logger.info("Starting NOF1 Trading Bot Backend...")
+    """
+    Production lifespan handler:
+    - PostgreSQL connection check
+    - Database initialization
+    - Market symbol synchronization
+    - Background tasks
+    """
+    logger.info("🚀 Starting TradAnalisa Platform...")
     
-    # Initialize database (fast - SQLite is quick)
+    # Check PostgreSQL connection
+    if not check_db_connection():
+        logger.error("❌ PostgreSQL connection failed! Check DATABASE_URL in .env")
+        logger.error("💡 Run 'python test_db_connection.py' to diagnose the issue")
+        logger.error("💡 Or run 'python setup_database.py' to setup database")
+        # Don't raise exception - let it continue with warning
+        # raise Exception("Database connection failed")
+    
+    # Initialize database schema
     init_db()
-    logger.info("✓ Database initialized")
+    logger.info("✓ PostgreSQL database initialized")
     
-    # Initialize Binance service (crypto) - lightweight, just creates session
+    # Initialize Binance service
     binance_service = BinanceService()
     await binance_service.initialize()
     app.state.binance_service = binance_service
     logger.info("✓ Binance service initialized")
     
-    # Initialize MT5 service (forex) - only if enabled (lazy import)
+    # Initialize MT5 service (if enabled)
     mt5_service = MT5Service()
-    # MT5 initialization is async but lightweight if disabled
     await mt5_service.initialize()
     app.state.mt5_service = mt5_service
     logger.info("✓ MT5 service initialized")
     
-    logger.info("✅ Backend started successfully!")
+    # Initialize market sync service
+    market_sync = MarketSyncService(binance_service)
+    app.state.market_sync = market_sync
+    
+    # Initialize robot trading service
+    robot_service.set_binance_service(binance_service)
+    logger.info("✓ Robot trading service initialized")
+    
+    # Sync crypto symbols on startup (non-blocking)
+    async def initial_sync():
+        with get_db_context() as db:
+            try:
+                count = await market_sync.sync_crypto_symbols(db)
+                logger.info(f"✓ Synced {count} crypto symbols from Binance")
+            except Exception as e:
+                logger.error(f"Failed to sync symbols: {e}")
+    
+    # Run sync in background
+    asyncio.create_task(initial_sync())
+    
+    # Start background task for periodic symbol sync (every 6 hours)
+    async def periodic_symbol_sync():
+        while True:
+            await asyncio.sleep(6 * 60 * 60)  # 6 hours
+            with get_db_context() as db:
+                try:
+                    count = await market_sync.sync_crypto_symbols(db)
+                    logger.info(f"🔄 Periodic sync: {count} symbols updated")
+                except Exception as e:
+                    logger.error(f"Periodic sync failed: {e}")
+    
+    sync_task = asyncio.create_task(periodic_symbol_sync())
+    
+    logger.info("✅ TradAnalisa Platform ready!")
     
     yield
     
     # Shutdown
-    logger.info("Shutting down NOF1 Trading Bot Backend...")
+    logger.info("🛑 Shutting down TradAnalisa Platform...")
+    sync_task.cancel()
     await binance_service.close()
     await mt5_service.close()
-    logger.info("✅ Backend shut down successfully!")
+    logger.info("✅ Shutdown complete")
 
 
 app = FastAPI(
-    title="NOF1 Trading Bot API",
-    description="AI-powered crypto trading bot with Binance integration",
-    version="1.0.0",
+    title="TradAnalisa API",
+    description="Production trading platform with OAuth, PostgreSQL, and AI",
+    version="2.0.0",
     lifespan=lifespan
 )
 
-# CORS middleware configuration
+# Session middleware for OAuth state management
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=app_settings.JWT_SECRET_KEY,
+    session_cookie="tradanalisa_session",
+    max_age=3600,  # 1 hour
+    same_site="lax",
+    https_only=False  # Set to True in production with HTTPS
+)
+
+# CORS middleware - allow frontend origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://100.85.124.82:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://100.85.124.82:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 
@@ -102,12 +169,16 @@ async def health_check():
 
 
 # Include routers
+app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(market.router, prefix="/api/market", tags=["Market Data"])
 app.include_router(trading.router, prefix="/api/trading", tags=["Trading"])
 app.include_router(performance.router, prefix="/api/performance", tags=["Performance"])
 app.include_router(ai_recommendations.router, prefix="/api/ai", tags=["AI Recommendations"])
 app.include_router(charts.router, prefix="/api/charts", tags=["Charts"])
 app.include_router(account.router, prefix="/api/account", tags=["Account"])
+app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])
+app.include_router(robot.router, prefix="/api/robot", tags=["Robot Trading"])
+app.include_router(user_settings.router, prefix="/api/user-settings", tags=["User Settings"])
 
 
 if __name__ == "__main__":

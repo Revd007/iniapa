@@ -3,7 +3,7 @@ Robot Trading API Routes
 Manages robot trading configuration and execution
 """
 
-from fastapi import APIRouter, HTTPException, Request, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Request, Depends, BackgroundTasks, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -228,6 +228,7 @@ async def trigger_manual_scan(
 
 @router.post("/start")
 async def start_robot(
+    environment: str = "demo",  # 'demo' or 'live'
     db: Session = Depends(get_db),
     user_id: int = 1  # TODO: Get from auth context
 ):
@@ -239,23 +240,34 @@ async def start_robot(
     - Gets AI recommendations
     - Executes trades if confidence > threshold
     - Applies safety checks (max positions, max loss, cooldown)
+    
+    Args:
+        environment: 'demo' or 'live' - determines which API keys to use
     """
     try:
-        # Enable robot in config
+        # Validate environment
+        if environment not in ["demo", "live"]:
+            raise HTTPException(status_code=400, detail="Environment must be 'demo' or 'live'")
+        
+        # Enable robot in config and set environment
         config = RobotConfigService.get_config(db, user_id)
         config.enabled = True
+        config.environment = environment
         db.commit()
         
-        # Start robot service
-        result = await robot_service.start(user_id)
+        # Start robot service with environment
+        result = await robot_service.start(user_id, environment)
         
-        logger.info(f"Robot started for user {user_id}")
+        logger.info(f"Robot started for user {user_id} (environment: {environment})")
         
         return {
             "success": True,
-            "message": "Robot started successfully - now monitoring market",
-            "enabled": True
+            "message": f"Robot started successfully - now monitoring market ({environment} mode)",
+            "enabled": True,
+            "environment": environment
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to start robot: {e}")
         db.rollback()
@@ -264,6 +276,7 @@ async def start_robot(
 
 @router.post("/stop")
 async def stop_robot(
+    environment: str = Query("demo", description="Environment: demo or live"),
     db: Session = Depends(get_db),
     user_id: int = 1  # TODO: Get from auth context
 ):
@@ -272,22 +285,29 @@ async def stop_robot(
     
     Disables the robot and stops the background scheduler.
     All configuration is preserved for next start.
+    
+    This endpoint is called when switching between demo/live modes
+    to ensure robot is stopped before environment change.
     """
     try:
         # Disable robot in config
         config = RobotConfigService.get_config(db, user_id)
         config.enabled = False
+        # Update environment if provided
+        if environment in ["demo", "live"]:
+            config.environment = environment
         db.commit()
         
-        # Stop robot service (pass user_id to update database)
-        result = await robot_service.stop(user_id)
+        # Stop robot service (pass user_id and environment to update database)
+        result = await robot_service.stop(user_id, environment)
         
-        logger.info(f"✅ Robot stopped for user {user_id}")
+        logger.info(f"✅ Robot stopped for user {user_id} (environment: {environment})")
         
         return {
             "success": True,
             "message": "Robot stopped successfully - no longer monitoring market",
-            "enabled": False
+            "enabled": False,
+            "environment": environment
         }
     except Exception as e:
         logger.error(f"Failed to stop robot: {e}")

@@ -1,11 +1,11 @@
 # NOF1 Trading Bot - Backend
 
-AI-powered cryptocurrency trading bot backend with Binance integration and DeepSeek AI recommendations.
+AI-powered cryptocurrency trading bot backend with Binance integration and Qwen AI recommendations.
 
 ## Features
 
 - 📊 **Real-time Market Data**: Live crypto prices from Binance (BTC, ETH, SOL, BNB, XRP)
-- 🤖 **AI Trading Recommendations**: Powered by DeepSeek AI via OpenRouter
+- 🤖 **AI Trading Recommendations**: Powered by Qwen AI via OpenRouter
 - 📈 **Performance Tracking**: Win rate, profit/loss, risk/reward metrics
 - 💹 **Chart Data**: Candlestick charts with technical indicators (MA20, MA50, RSI)
 - ⚡ **Quick Execute**: Fast trade execution with position tracking

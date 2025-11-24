@@ -185,12 +185,7 @@ function AIPanel({ model, mode, assetClass, recommendations, loading, error, onR
 
 // Main Dual Panel Component
 export default function AIRecommendationsDual({ mode, assetClass }: AIRecommendationsDualProps) {
-  // DeepSeek state
-  const [deepseekRecs, setDeepseekRecs] = useState<AIRecommendation[]>([])
-  const [deepseekLoading, setDeepseekLoading] = useState(true)
-  const [deepseekError, setDeepseekError] = useState<string | null>(null)
-  
-  // Qwen state
+  // Qwen state only
   const [qwenRecs, setQwenRecs] = useState<AIRecommendation[]>([])
   const [qwenLoading, setQwenLoading] = useState(true)
   const [qwenError, setQwenError] = useState<string | null>(null)
@@ -200,7 +195,7 @@ export default function AIRecommendationsDual({ mode, assetClass }: AIRecommenda
   }, [mode, assetClass])
 
   const fetchBothRecommendations = () => {
-    fetchDeepseek()
+    // Only fetch Qwen
     fetchQwen()
   }
 
@@ -216,29 +211,6 @@ export default function AIRecommendationsDual({ mode, assetClass }: AIRecommenda
     }
   }
 
-  const fetchDeepseek = async () => {
-    if (assetClass !== 'crypto') {
-      setDeepseekRecs([])
-      setDeepseekLoading(false)
-      return
-    }
-
-    setDeepseekLoading(true)
-    setDeepseekError(null)
-
-    try {
-      const pinnedSymbols = await getPinnedSymbols()
-      console.log('[AI DeepSeek] Fetching with pinned symbols:', pinnedSymbols)
-      const data = await aiApi.getRecommendations(mode, assetClass, 6, 'deepseek', pinnedSymbols)
-      console.log('[AI DeepSeek] Received recommendations:', data)
-      setDeepseekRecs(data)
-      setDeepseekLoading(false)
-    } catch (err: any) {
-      setDeepseekError(err.message || 'Failed to fetch')
-      setDeepseekLoading(false)
-      console.error('[AI DeepSeek] Error:', err)
-    }
-  }
 
   const fetchQwen = async () => {
     if (assetClass !== 'crypto') {
@@ -290,8 +262,8 @@ export default function AIRecommendationsDual({ mode, assetClass }: AIRecommenda
   }
 
   return (
-    <div className="grid grid-cols-2 gap-3 h-full">
-      {/* Qwen Panel (LEFT) */}
+    <div className="h-full">
+      {/* Qwen Panel Only */}
       <AIPanel
         model="qwen"
         mode={mode}
@@ -300,17 +272,6 @@ export default function AIRecommendationsDual({ mode, assetClass }: AIRecommenda
         loading={qwenLoading}
         error={qwenError}
         onRefresh={fetchQwen}
-      />
-      
-      {/* DeepSeek Panel (RIGHT) */}
-      <AIPanel
-        model="deepseek"
-        mode={mode}
-        assetClass={assetClass}
-        recommendations={deepseekRecs}
-        loading={deepseekLoading}
-        error={deepseekError}
-        onRefresh={fetchDeepseek}
       />
     </div>
   )

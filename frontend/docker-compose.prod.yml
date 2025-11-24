@@ -1,0 +1,44 @@
+version: '3.8'
+
+# Production docker-compose override
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  backend:
+    environment:
+      - DEBUG=false
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+    restart: always
+
+  frontend:
+    environment:
+      - NODE_ENV=production
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    restart: always
+
+  postgres:
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    restart: always
+    command: postgres -c shared_buffers=256MB -c max_connections=200
+

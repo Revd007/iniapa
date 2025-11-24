@@ -404,8 +404,8 @@ export const robotApi = {
   /**
    * Start robot trading
    */
-  async start(): Promise<{ success: boolean; message: string; enabled: boolean }> {
-    const response = await fetch(`${API_BASE_URL}/api/robot/start`, {
+  async start(environment: 'demo' | 'live' = 'demo'): Promise<{ success: boolean; message: string; enabled: boolean; environment?: string }> {
+    const response = await fetch(`${API_BASE_URL}/api/robot/start?environment=${environment}`, {
       method: 'POST',
     });
     if (!response.ok) throw new Error('Failed to start robot');
@@ -415,8 +415,8 @@ export const robotApi = {
   /**
    * Stop robot trading
    */
-  async stop(): Promise<{ success: boolean; message: string; enabled: boolean }> {
-    const response = await fetch(`${API_BASE_URL}/api/robot/stop`, {
+  async stop(environment: 'demo' | 'live' = 'demo'): Promise<{ success: boolean; message: string; enabled: boolean; environment?: string }> {
+    const response = await fetch(`${API_BASE_URL}/api/robot/stop?environment=${environment}`, {
       method: 'POST',
     });
     if (!response.ok) throw new Error('Failed to stop robot');

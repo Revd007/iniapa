@@ -1,6 +1,6 @@
 """
 AI Trading Recommendations Service
-Uses OpenRouter DeepSeek API for generating trading recommendations
+Uses OpenRouter Qwen API for generating trading recommendations
 """
 
 import aiohttp
@@ -21,13 +21,11 @@ class AIRecommendationService:
         self.api_key = settings.OPENROUTER_API_KEY
         self.base_url = settings.OPENROUTER_BASE_URL
         
-        # Support multiple AI models
-        self.model_deepseek = settings.OPENROUTER_MODEL_DEEPSEEK
+        # AI model (Qwen only, DeepSeek deprecated)
         self.model_qwen = settings.OPENROUTER_MODEL_QWEN
         
-        # Circuit breaker: track consecutive failures per model
+        # Circuit breaker: track consecutive failures
         self.circuit_breaker_state = {
-            'deepseek': {'failures': 0, 'last_failure': None},
             'qwen': {'failures': 0, 'last_failure': None}
         }
         self.circuit_breaker_threshold = 3  # After 3 failures, wait before retrying
@@ -36,7 +34,7 @@ class AIRecommendationService:
         # Log API key status (without exposing the actual key)
         if self.api_key:
             logger.info(f"OpenRouter API key configured (length: {len(self.api_key)}, starts with: {self.api_key[:10]}...)")
-            logger.info(f"AI Models: DeepSeek={self.model_deepseek}, Qwen={self.model_qwen}")
+            logger.info(f"AI Model: Qwen={self.model_qwen}")
         else:
             logger.warning("OpenRouter API key not configured - AI recommendations will use fallback data")
         
@@ -48,12 +46,12 @@ class AIRecommendationService:
         technical_data: Dict = None,
         limit: int = 6,
         history_context: str | None = None,
-        ai_model: str = "deepseek",  # 'deepseek' or 'qwen'
+        ai_model: str = "qwen",  # 'qwen' (default, deepseek deprecated)
     ) -> List[Dict]:
         """Generate trading recommendations based on mode, market data, technical indicators and historical context
         
         Args:
-            ai_model: Which AI model to use - 'deepseek' (fast, technical) or 'qwen' (advanced reasoning)
+            ai_model: Which AI model to use - 'qwen' (advanced reasoning, default)
         """
         
         # Prepare market context
@@ -74,7 +72,7 @@ class AIRecommendationService:
             limit=limit,
         )
         
-        # Call AI API (DeepSeek or Qwen)
+        # Call AI API (Qwen)
         try:
             recommendations = await self._call_ai_model(prompt, mode, ai_model)
             
@@ -300,13 +298,13 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
 
         return prompt
     
-    async def _call_ai_model(self, prompt: str, mode: str, ai_model: str = "deepseek") -> List[Dict]:
+    async def _call_ai_model(self, prompt: str, mode: str, ai_model: str = "qwen") -> List[Dict]:
         """
-        Call OpenRouter AI API (DeepSeek or Qwen) with retry logic and circuit breaker.
+        Call OpenRouter AI API (Qwen) with retry logic and circuit breaker.
         CRITICAL: This function must be reliable - users make trading decisions based on this.
         
         Args:
-            ai_model: 'deepseek' or 'qwen'
+            ai_model: 'qwen' (default, deepseek deprecated)
         """
         import time
         import asyncio
@@ -315,9 +313,11 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
             logger.warning(f"OpenRouter API key not configured, using fallback recommendations")
             return []
         
-        # Get model name and circuit breaker state
-        model_name = self.model_deepseek if ai_model == "deepseek" else self.model_qwen
-        breaker_state = self.circuit_breaker_state.get(ai_model, {'failures': 0, 'last_failure': None})
+        # Get model name and circuit breaker state (Qwen only)
+        if ai_model != "qwen":
+            logger.warning(f"AI model '{ai_model}' is deprecated, using Qwen instead")
+        model_name = self.model_qwen
+        breaker_state = self.circuit_breaker_state.get('qwen', {'failures': 0, 'last_failure': None})
         
         # Circuit breaker: check if we should skip API call due to recent failures
         if breaker_state['failures'] >= self.circuit_breaker_threshold:

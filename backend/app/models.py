@@ -196,7 +196,7 @@ class Trade(Base):
     # AI integration
     ai_confidence = Column(Float)
     ai_reason = Column(Text)
-    ai_model = Column(String(50))  # deepseek, qwen, etc
+    ai_model = Column(String(50))  # qwen (DeepSeek deprecated)
     
     # External order IDs
     binance_order_id = Column(String(100))
@@ -253,8 +253,11 @@ class RobotConfig(Base):
     daily_profit_target = Column(Float)
     
     # AI model preferences
-    ai_models = Column(String(200), default="qwen,deepseek")  # Comma-separated
-    require_consensus = Column(Boolean, default=True)  # Both AIs must agree
+    ai_models = Column(String(200), default="qwen")  # Comma-separated (qwen only)
+    require_consensus = Column(Boolean, default=False)  # Not needed since only Qwen
+    
+    # Environment (demo/live)
+    environment = Column(String(10), default="demo")  # 'demo' or 'live'
     
     # Cooldown settings
     trade_cooldown_seconds = Column(Integer, default=30)

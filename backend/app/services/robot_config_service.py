@@ -34,8 +34,9 @@ class RobotConfigService:
                 strategies="Breakout,Trend Fusion",
                 max_daily_loss=50.0,
                 max_drawdown_percent=20.0,
-                ai_models="qwen,deepseek",
-                require_consensus=True,
+                ai_models="qwen",
+                require_consensus=False,  # Not needed since only Qwen
+                environment="demo",  # Default to demo mode
                 trade_cooldown_seconds=30,  # 30 seconds cooldown (less conservative)
                 scan_interval_seconds=30,  # Scan every 30 seconds
             )

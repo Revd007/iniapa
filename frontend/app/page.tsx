@@ -22,10 +22,14 @@ export default function Home() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC')
   const [showLeftSidebar, setShowLeftSidebar] = useState(true)
   const [showRightSidebar, setShowRightSidebar] = useState(true)
+  const [environment, setEnvironment] = useState<'demo' | 'live'>('demo')
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col">
-      <Header assetClass={assetClass} />
+      <Header 
+        assetClass={assetClass} 
+        onEnvironmentChange={setEnvironment}
+      />
       
       <div className="flex-1 flex flex-col gap-2 overflow-hidden">
         {/* Top Controls - Compact, Single Row */}
@@ -64,6 +68,7 @@ export default function Home() {
             <RobotTrading 
               mode={tradingMode}
               assetClass={assetClass}
+              environment={environment}
             />
           </div>
           )}
@@ -140,6 +145,7 @@ export default function Home() {
               <RobotTrading 
                 mode={tradingMode}
                 assetClass={assetClass}
+                environment={environment}
               />
             </div>
           </div>

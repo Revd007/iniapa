@@ -61,9 +61,7 @@ class Settings:
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
     
     # AI Models for trading recommendations
-    # DeepSeek: Fast, cost-effective, good for technical analysis
-    OPENROUTER_MODEL_DEEPSEEK = "deepseek/deepseek-chat-v3"
-    # Qwen: Advanced reasoning, multi-perspective analysis
+    # Qwen: Advanced reasoning, multi-perspective analysis (DeepSeek deprecated)
     OPENROUTER_MODEL_QWEN = "qwen/qwen3-max"
     
     # Debug mode (define early)

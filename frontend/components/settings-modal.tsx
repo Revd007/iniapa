@@ -82,6 +82,10 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         setApiSecret('')
         setTimeout(() => {
           fetchAccountInfo()
+          // Auto-close modal after 1.5 seconds
+          setTimeout(() => {
+            onClose()
+          }, 1500)
         }, 1000)
       } else {
         setMessage({ type: 'error', text: data.message || 'Failed to save API keys' })
@@ -112,6 +116,10 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         setApiSecret('')
         setTimeout(() => {
           fetchAccountInfo()
+          // Auto-close modal after 1.5 seconds
+          setTimeout(() => {
+            onClose()
+          }, 1500)
         }, 1000)
       }
     } catch (error) {
@@ -124,14 +132,21 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
-      <div className="bg-slate-900 rounded-lg border border-slate-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+    <div 
+      className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-slate-900 rounded-lg border border-slate-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex justify-between items-center p-4 border-b border-slate-700">
           <h2 className="text-lg font-semibold text-white">⚙️ Settings</h2>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-white text-2xl leading-none px-2"
+            className="text-slate-400 hover:text-white hover:bg-slate-800 rounded-full w-8 h-8 flex items-center justify-center text-2xl leading-none transition"
+            title="Close"
           >
             ×
           </button>
@@ -294,6 +309,13 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 🗑️ Remove Keys
               </button>
             )}
+            
+            <button
+              onClick={onClose}
+              className="bg-slate-700 hover:bg-slate-600 text-white py-2 px-4 rounded font-medium transition"
+            >
+              Close
+            </button>
           </div>
         </div>
       </div>

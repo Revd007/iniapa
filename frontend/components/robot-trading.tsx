@@ -6,6 +6,7 @@ import { aiApi, tradingApi, robotApi, type RobotConfig as ApiRobotConfig } from 
 interface RobotTradingProps {
   mode: 'scalper' | 'normal' | 'aggressive' | 'longhold'
   assetClass: 'stocks' | 'forex' | 'crypto'
+  environment?: 'demo' | 'live'
 }
 
 /**
@@ -40,7 +41,7 @@ const DEFAULT_CONFIG: RobotConfig = {
   capitalPerTrade: 5,
 }
 
-export default function RobotTrading({ mode, assetClass }: RobotTradingProps) {
+export default function RobotTrading({ mode, assetClass, environment = 'demo' }: RobotTradingProps) {
   // State management
   const [config, setConfigState] = useState<RobotConfig>(DEFAULT_CONFIG)
   const [mounted, setMounted] = useState(false)
@@ -100,6 +101,27 @@ export default function RobotTrading({ mode, assetClass }: RobotTradingProps) {
       updateModeAndAsset()
     }
   }, [mode, assetClass, mounted])
+
+  /**
+   * Stop robot when environment changes (demo <-> live)
+   * Robot should never auto-start when switching environments
+   */
+  useEffect(() => {
+    if (mounted && config.enabled) {
+      // Stop robot when environment changes
+      const stopRobot = async () => {
+        try {
+          await robotApi.stop(environment)
+          setConfigState(prev => ({ ...prev, enabled: false }))
+          await loadConfigFromBackend()
+          console.log(`✅ Robot stopped due to environment change to ${environment}`)
+        } catch (error) {
+          console.error('Failed to stop robot on environment change:', error)
+        }
+      }
+      stopRobot()
+    }
+  }, [environment, mounted])
 
   /**
    * Update configuration wrapper
@@ -266,6 +288,19 @@ export default function RobotTrading({ mode, assetClass }: RobotTradingProps) {
   }
 
   /**
+   * Poll robot status periodically to ensure UI stays in sync with backend
+   */
+  useEffect(() => {
+    if (!mounted) return
+    
+    const pollInterval = setInterval(() => {
+      loadConfigFromBackend()
+    }, 5000) // Poll every 5 seconds to keep UI in sync
+    
+    return () => clearInterval(pollInterval)
+  }, [mounted])
+  
+  /**
    * Auto-scan interval when robot is enabled
    * Scans for signals every 30 seconds while robot is active
    */
@@ -306,29 +341,37 @@ export default function RobotTrading({ mode, assetClass }: RobotTradingProps) {
             try {
               if (config.enabled) {
                 // STOP robot
-                const result = await robotApi.stop()
+                const result = await robotApi.stop(environment)
                 if (result.success) {
+                  // Immediately update state for instant UI feedback
                   setConfigState(prev => ({ ...prev, enabled: false }))
                   // Reload config from backend to ensure sync
                   await loadConfigFromBackend()
-                  console.log('✅ Robot stopped')
+                  console.log(`✅ Robot stopped (${environment} mode)`)
                 } else {
                   console.error('Failed to stop robot:', result.message)
+                  // Reload config anyway to sync with backend state
+                  await loadConfigFromBackend()
                 }
               } else {
                 // START robot
-                const result = await robotApi.start()
+                const result = await robotApi.start(environment)
                 if (result.success) {
+                  // Immediately update state for instant UI feedback
                   setConfigState(prev => ({ ...prev, enabled: true }))
                   // Reload config from backend to ensure sync
                   await loadConfigFromBackend()
-                  console.log('✅ Robot started')
+                  console.log(`✅ Robot started (${environment} mode)`)
                 } else {
                   console.error('Failed to start robot:', result.message)
+                  // Reload config anyway to sync with backend state
+                  await loadConfigFromBackend()
                 }
               }
             } catch (error) {
               console.error('Failed to toggle robot:', error)
+              // Reload config on error to sync with backend state
+              await loadConfigFromBackend()
             } finally {
               setLoading(false)
             }
