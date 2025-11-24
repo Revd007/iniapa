@@ -1,4 +1,4 @@
-# NOF1 Trading Platform
+# Tradanalisa Trading Platform
 
 Platform trading crypto otomatis dengan AI recommendations dan robot trading yang cerdas. Built with Next.js 16, FastAPI, PostgreSQL, dan integrasi Binance API.
 
@@ -28,7 +28,7 @@ Platform ini menggunakan **microservices architecture** dengan:
 ## 📁 Struktur Project
 
 ```
-nof1beta/
+Tradanalisabeta/
 ├── app/                          # Next.js App Directory
 │   ├── layout.tsx               # Root layout
 │   ├── page.tsx                 # Main dashboard page
@@ -194,7 +194,7 @@ User
 1. **Clone repository**
 ```bash
 git clone <repository-url>
-cd nof1beta
+cd Tradanalisabeta
 ```
 
 2. **Setup Backend**
@@ -213,7 +213,7 @@ npm install
 4. **Configure Environment**
 ```bash
 # Backend: backend/.env
-DATABASE_URL=postgresql://user:password@localhost:5432/nof1beta
+DATABASE_URL=postgresql://user:password@localhost:5432/Tradanalisabeta
 BINANCE_API_KEY=your_key
 BINANCE_API_SECRET=your_secret
 OPENROUTER_API_KEY=your_key
@@ -364,4 +364,4 @@ MIT License
 
 ---
 
-**Last Updated**: 2025-11-22
+**Last Updated**: 2025-11-24
