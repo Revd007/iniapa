@@ -1,0 +1,31 @@
+# Coolify Configuration
+# This file helps Coolify understand the project structure
+
+version: '1.0'
+
+# Application configuration
+application:
+  name: nof1beta
+  type: dockerfile
+  
+# Build configuration
+build:
+  dockerfile: Dockerfile
+  context: .
+  
+# Port configuration
+ports:
+  - 3000
+
+# Health check
+healthcheck:
+  path: /
+  interval: 30
+  timeout: 10
+  retries: 3
+
+# Environment variables (set these in Coolify dashboard)
+environment:
+  - NEXT_PUBLIC_API_URL
+  - NODE_ENV=production
+
