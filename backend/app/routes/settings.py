@@ -59,22 +59,36 @@ async def get_account_info(
         # Get user's API credentials if exists
         api_creds = db.query(APICredential).filter_by(user_id=user_id).first()
         
+        # Determine environment: prioritize request parameter over stored value
+        # Normalize env parameter (handle case variations)
+        env_lower = env.lower() if env else ''
+        if env_lower in ['live', 'production', 'prod']:
+            custom_env = 'live'
+        elif env_lower in ['demo', 'test', 'testnet']:
+            custom_env = 'demo'
+        else:
+            # Fallback to stored environment or default
+            if api_creds and api_creds.environment:
+                custom_env = api_creds.environment.lower()
+                if custom_env not in ['demo', 'live']:
+                    custom_env = 'demo'
+            else:
+                custom_env = 'demo'
+        
+        logger.info(f"Account info request - env param: {env}, custom_env: {custom_env}, has_api_creds: {bool(api_creds and api_creds.binance_api_key)}")
+        
         if api_creds and api_creds.binance_api_key:
             # Use user's custom API keys
             api_key = decrypt_value(api_creds.binance_api_key)
             api_secret = decrypt_value(api_creds.binance_api_secret)
-            # Prioritize env parameter from request (user's current selection) over stored environment
-            # This allows user to switch between demo/live dynamically
-            custom_env = env or api_creds.environment or 'demo'
         else:
             # Use default keys from settings
-            if env == "demo":
+            if custom_env == "demo":
                 api_key = settings.BINANCE_DEMO_API_KEY
                 api_secret = settings.BINANCE_DEMO_API_SECRET
             else:
                 api_key = settings.BINANCE_LIVE_API_KEY
                 api_secret = settings.BINANCE_LIVE_API_SECRET
-            custom_env = env
         
         # Get binance service
         binance_service = request.app.state.binance_service
@@ -83,6 +97,7 @@ async def get_account_info(
         original_key = binance_service.api_key
         original_secret = binance_service.api_secret
         original_testnet = binance_service.testnet
+        original_base_url = binance_service.base_url
         
         try:
             # Set API keys and testnet mode based on environment
@@ -96,6 +111,8 @@ async def get_account_info(
                 binance_service.base_url = settings.BINANCE_TESTNET_BASE_URL
             else:
                 binance_service.base_url = "https://api.binance.com/api"
+            
+            logger.info(f"Binance service configured - testnet: {binance_service.testnet}, base_url: {binance_service.base_url}, env: {custom_env}")
             
             # Get account info from Binance
             # Try Spot account first
@@ -227,10 +244,7 @@ async def get_account_info(
             binance_service.api_key = original_key
             binance_service.api_secret = original_secret
             binance_service.testnet = original_testnet
-            if original_testnet:
-                binance_service.base_url = settings.BINANCE_TESTNET_BASE_URL
-            else:
-                binance_service.base_url = "https://api.binance.com/api"
+            binance_service.base_url = original_base_url
         
     except Exception as e:
         logger.error(f"Failed to get account info: {e}")
