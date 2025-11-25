@@ -339,7 +339,7 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://nof1beta.app",
+            "HTTP-Referer": "https://tradanalisa.app",
             "X-Title": "NOF1 Trading Bot"
         }
         

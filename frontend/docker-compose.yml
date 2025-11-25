@@ -4,7 +4,7 @@ services:
   # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
-    container_name: nof1beta_postgres
+    container_name: tradanalisa_postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-tradanalisa}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
@@ -19,14 +19,14 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - nof1beta_network
+      - tradanalisa_network
 
   # Backend API
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: nof1beta_backend
+    container_name: tradanalisa_backend
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-tradanalisa}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-tradanalisa}
       - API_HOST=0.0.0.0
@@ -47,7 +47,7 @@ services:
       - ./backend/logs:/app/logs
     restart: unless-stopped
     networks:
-      - nof1beta_network
+      - tradanalisa_network
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
       interval: 30s
@@ -60,7 +60,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: nof1beta_frontend
+    container_name: tradanalisa_frontend
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
       - NODE_ENV=production
@@ -70,12 +70,12 @@ services:
       - backend
     restart: unless-stopped
     networks:
-      - nof1beta_network
+      - tradanalisa_network
 
   # Nginx Reverse Proxy (Optional - for production)
   nginx:
     image: nginx:alpine
-    container_name: nof1beta_nginx
+    container_name: tradanalisa_nginx
     ports:
       - "80:80"
       - "443:443"
@@ -87,12 +87,12 @@ services:
       - backend
     restart: unless-stopped
     networks:
-      - nof1beta_network
+      - tradanalisa_network
 
 volumes:
   postgres_data:
 
 networks:
-  nof1beta_network:
+  tradanalisa_network:
     driver: bridge
 

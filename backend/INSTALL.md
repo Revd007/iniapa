@@ -17,7 +17,7 @@ Complete installation guide for the Python backend.
 1. Open Command Prompt or PowerShell
 2. Navigate to backend folder:
    ```cmd
-   cd path\to\nof1beta\backend
+   cd path\to\tradanalisa\backend
    ```
 3. Run setup script:
    ```cmd
@@ -28,7 +28,7 @@ Complete installation guide for the Python backend.
 1. Open Terminal
 2. Navigate to backend folder:
    ```bash
-   cd path/to/nof1beta/backend
+   cd path/to/tradanalisa/backend
    ```
 3. Make scripts executable:
    ```bash
