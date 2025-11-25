@@ -73,6 +73,7 @@ class User(Base):
     robot_config = relationship("RobotConfig", back_populates="user", uselist=False, cascade="all, delete-orphan")
     api_credentials = relationship("APICredential", back_populates="user", cascade="all, delete-orphan")
     user_settings = relationship("UserSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    withdrawal_history = relationship("WithdrawalHistory", back_populates="user", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<User {self.username}>"
@@ -121,6 +122,7 @@ class APICredential(Base):
     binance_api_key = Column(String(255))
     binance_api_secret = Column(String(255))
     binance_testnet = Column(Boolean, default=True)
+    environment = Column(String(10), default="demo")  # 'demo' or 'live' - determines which API keys to use
     
     # MT5 OAuth/credentials
     mt5_access_token = Column(Text)
@@ -347,3 +349,56 @@ class MarketSymbol(Base):
         Index("idx_symbol_asset_class", "asset_class", "is_active"),
     )
 
+
+class WithdrawalStatus(str, enum.Enum):
+    """Withdrawal status enumeration"""
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class WithdrawalHistory(Base):
+    """Withdrawal history tracking"""
+    __tablename__ = "withdrawal_history"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, default=1)
+    
+    # Withdrawal details
+    asset = Column(String(10), nullable=False)  # USDT, BTC, etc.
+    amount = Column(Float, nullable=False)
+    address = Column(String(255), nullable=False)
+    network = Column(String(50))  # BSC, ETH, TRX, etc.
+    address_tag = Column(String(255))  # For XRP, XLM, etc.
+    name = Column(String(255))  # Description/name
+    
+    # Status and tracking
+    status = Column(Enum(WithdrawalStatus), default=WithdrawalStatus.PENDING, nullable=False, index=True)
+    withdrawal_id = Column(String(100))  # Binance withdrawal ID
+    tx_id = Column(String(255))  # Transaction hash/ID
+    
+    # Environment
+    environment = Column(String(10), default="demo", nullable=False)  # 'demo' or 'live'
+    
+    # Error tracking
+    error_message = Column(Text)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    completed_at = Column(DateTime(timezone=True))
+    
+    # Relationships
+    user = relationship("User", back_populates="withdrawal_history")
+    
+    __table_args__ = (
+        Index("idx_withdrawal_user_status", "user_id", "status"),
+        Index("idx_withdrawal_environment", "environment", "status"),
+        Index("idx_withdrawal_created", "created_at"),
+        CheckConstraint("amount > 0", name="check_withdrawal_amount_positive"),
+    )
+    
+    def __repr__(self):
+        return f"<WithdrawalHistory {self.asset} {self.amount} to {self.address[:10]}...>"

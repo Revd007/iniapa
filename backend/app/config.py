@@ -23,14 +23,9 @@ class Settings:
     API_PORT = int(os.getenv("API_PORT", 8000))
     
     # Binance API Settings (Live / Demo Testnet)
-    # We route keys based on BINANCE_TESTNET flag so it's explicit which env is used.
-    BINANCE_TESTNET = (
-        os.getenv("BINANCE_TESTNET")
-        or os.getenv("BINANCE_DEMO_TESTNET")
-        or os.getenv("BINANCE_LIVE_TESTNET")
-        or "true"
-    )
-    BINANCE_TESTNET = str(BINANCE_TESTNET).lower() == "true"
+    # Default to testnet for safety, but this will be overridden per-request based on environment selection
+    # This is just the DEFAULT startup configuration
+    BINANCE_TESTNET = os.getenv("BINANCE_TESTNET", "true").lower() == "true"
 
     # Live keys (real account - use with care)
     BINANCE_LIVE_API_KEY = os.getenv("BINANCE_LIVE_API_KEY", "")

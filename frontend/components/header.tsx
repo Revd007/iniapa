@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { accountApi, robotApi, type AccountSummary } from '@/lib/api';
-import SettingsModal from './settings-modal';
 
 interface HeaderProps {
   assetClass?: 'stocks' | 'forex' | 'crypto'
@@ -10,6 +10,7 @@ interface HeaderProps {
 type EnvironmentType = 'demo' | 'live'
 
 export default function Header({ assetClass, onEnvironmentChange }: HeaderProps) {
+  const router = useRouter()
   const assetNames = {
     stocks: 'STOCKS',
     forex: 'FOREX',
@@ -21,13 +22,12 @@ export default function Header({ assetClass, onEnvironmentChange }: HeaderProps)
   const [env, setEnv] = useState<EnvironmentType>('demo')
   const [balance, setBalance] = useState<number>(0)
   const [summary, setSummary] = useState<AccountSummary | null>(null)
-  const [showSettings, setShowSettings] = useState(false)
+  const [isInitialized, setIsInitialized] = useState(false)
 
   const loadSummary = async (targetEnv?: EnvironmentType) => {
     try {
       const asset = assetClass === 'forex' ? 'forex' : 'crypto'
-      // Always send env parameter (default to 'demo' if not specified)
-      const envToUse = targetEnv || 'demo'
+      const envToUse = targetEnv || env
       
       // Stop robot before switching environment
       try {
@@ -49,17 +49,34 @@ export default function Header({ assetClass, onEnvironmentChange }: HeaderProps)
       }
     } catch (e) {
       console.error('Failed to load account summary', e)
-      // Set default values on error
       setBalance(0)
-      setEnv('demo')
-      if (onEnvironmentChange) {
-        onEnvironmentChange('demo')
+      // Don't force env to demo on error
+      if (onEnvironmentChange && !isInitialized) {
+        onEnvironmentChange(env)
       }
     }
   }
 
+  // Load saved environment from localStorage or API on mount
   useEffect(() => {
-    loadSummary('demo') // Always start with demo mode
+    const loadInitialEnv = async () => {
+      try {
+        // Try to get environment from settings API
+        const response = await fetch('http://localhost:8000/api/settings/current')
+        const data = await response.json()
+        if (data.success && data.has_custom_keys) {
+          const savedEnv = data.environment || 'demo'
+          setEnv(savedEnv as EnvironmentType)
+          await loadSummary(savedEnv as EnvironmentType)
+        } else {
+          await loadSummary('demo')
+        }
+      } catch (e) {
+        await loadSummary('demo')
+      }
+      setIsInitialized(true)
+    }
+    loadInitialEnv()
   }, [assetClass])
 
   return (
@@ -112,22 +129,13 @@ export default function Header({ assetClass, onEnvironmentChange }: HeaderProps)
 
           {/* Settings pill */}
           <button 
-            onClick={() => setShowSettings(true)}
+            onClick={() => router.push('/settings')}
             className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-full text-xs font-medium border border-slate-700 transition"
           >
             ⚙️ Settings
           </button>
         </div>
       </div>
-
-      {/* Settings Modal */}
-      <SettingsModal 
-        isOpen={showSettings} 
-        onClose={() => {
-          setShowSettings(false)
-          loadSummary(env) // Reload balance after settings change
-        }} 
-      />
     </header>
   )
 }

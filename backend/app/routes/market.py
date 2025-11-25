@@ -105,8 +105,21 @@ async def get_market_overview(
                         continue
                         
             except Exception as e:
+                error_str = str(e)
+                # Don't retry if it's a geolocation restriction - circuit breaker will handle it
+                if 'geolocation restriction' in error_str.lower() or 'not available in your location' in error_str.lower():
+                    logger.warning(f"Geolocation restriction detected, skipping fallback retries: {error_str}")
+                    # Return empty overview instead of retrying
+                    return {
+                        "success": False,
+                        "data": [],
+                        "timestamp": None,
+                        "count": 0,
+                        "error": "Binance API is not available in your location due to geolocation restrictions. Please use VPN or contact support."
+                    }
+                
                 logger.error(f"Failed to fetch batch tickers: {e}")
-                # Fallback: try individual requests for top 5 only
+                # Fallback: try individual requests for top 5 only (only if not geolocation error)
                 for symbol_obj in symbols[:5]:
                     try:
                         ticker = await binance_service.get_24h_ticker(symbol_obj.symbol)
@@ -129,6 +142,10 @@ async def get_market_overview(
                             'raw_change': change_pct,
                         })
                     except Exception as e2:
+                        # Check if fallback also failed due to geolocation
+                        if 'geolocation restriction' in str(e2).lower() or 'not available in your location' in str(e2).lower():
+                            logger.warning(f"Geolocation restriction in fallback, stopping retries")
+                            break
                         logger.warning(f"Failed to fetch ticker for {symbol_obj.symbol}: {e2}")
                         continue
         

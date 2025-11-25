@@ -3,7 +3,11 @@
 import { useEffect, useState } from 'react'
 import { tradingApi, type PositionSummary } from '@/lib/api'
 
-export default function OpenPositionsBanner() {
+interface OpenPositionsBannerProps {
+  environment?: 'demo' | 'live'
+}
+
+export default function OpenPositionsBanner({ environment = 'demo' }: OpenPositionsBannerProps) {
   const [positions, setPositions] = useState<PositionSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [closing, setClosing] = useState<number | null>(null)
@@ -11,7 +15,7 @@ export default function OpenPositionsBanner() {
   const fetchPositions = async () => {
     try {
       setLoading(true)
-      const data = await tradingApi.getPositions()
+      const data = await tradingApi.getPositions(environment)
       setPositions(data.positions || data) // Handle both old and new format
       
       // Show notification if positions were auto-closed
@@ -48,7 +52,7 @@ export default function OpenPositionsBanner() {
     // Real-time updates: poll every 3 seconds for TP/SL checking
     const id = setInterval(fetchPositions, 3000)
     return () => clearInterval(id)
-  }, [])
+  }, [environment])
 
   if (loading && positions.length === 0) {
     return (

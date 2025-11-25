@@ -22,14 +22,18 @@ interface Trade {
   closed_at: string | null
 }
 
-export default function TradeHistory() {
+interface TradeHistoryProps {
+  environment?: 'demo' | 'live'
+}
+
+export default function TradeHistory({ environment = 'demo' }: TradeHistoryProps) {
   const [trades, setTrades] = useState<Trade[]>([])
   const [loading, setLoading] = useState(true)
 
   const fetchHistory = async () => {
     try {
       setLoading(true)
-      const data = await tradingApi.getTradeHistory(100)
+      const data = await tradingApi.getTradeHistory(100, environment)
       setTrades(data)
     } catch (e) {
       console.error('Failed to fetch trade history', e)
@@ -43,7 +47,7 @@ export default function TradeHistory() {
     // Refresh every 10 seconds
     const id = setInterval(fetchHistory, 10000)
     return () => clearInterval(id)
-  }, [])
+  }, [environment])
 
   if (loading && trades.length === 0) {
     return (

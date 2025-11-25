@@ -7,6 +7,30 @@ interface SettingsModalProps {
   onClose: () => void
 }
 
+interface PortfolioMarginInfo {
+  total_wallet_balance: number
+  total_unrealized_pnl: number
+  available_balance: number
+  total_initial_margin: number
+  total_maint_margin: number
+  active_positions_count: number
+  total_unrealized_profit: number
+  assets?: Array<{
+    asset: string
+    crossWalletBalance: string
+    crossUnPnl: string
+    maintMargin: string
+    initialMargin: string
+  }>
+  positions?: Array<{
+    symbol: string
+    positionAmt: string
+    unrealizedProfit: string
+    leverage: string
+    entryPrice: string
+  }>
+}
+
 interface AccountInfo {
   success: boolean
   environment: string
@@ -14,6 +38,11 @@ interface AccountInfo {
   balance: number
   account_type?: string
   can_trade?: boolean
+  can_withdraw?: boolean
+  can_deposit?: boolean
+  permissions?: string[]
+  has_portfolio_margin?: boolean
+  portfolio_margin?: PortfolioMarginInfo
   error?: string
 }
 
@@ -159,41 +188,142 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <h3 className="text-sm font-semibold text-white mb-3">📊 Account Information</h3>
             
             {accountInfo ? (
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Environment:</span>
-                  <span className={`font-medium ${accountInfo.environment === 'live' ? 'text-red-400' : 'text-green-400'}`}>
-                    {accountInfo.environment === 'live' ? '🔴 LIVE' : '🟢 DEMO (Testnet)'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">API Keys:</span>
-                  <span className="text-white font-medium">
-                    {accountInfo.has_custom_keys ? '✅ Custom' : '⚠️ Default (Shared)'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Balance:</span>
-                  <span className="text-white font-medium text-lg">
-                    ${accountInfo.balance.toFixed(2)} USDT
-                  </span>
-                </div>
-                {accountInfo.account_type && (
+              <div className="space-y-3 text-sm">
+                {/* Basic Info */}
+                <div className="space-y-2 pb-2 border-b border-slate-700">
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Account Type:</span>
-                    <span className="text-white">{accountInfo.account_type}</span>
-                  </div>
-                )}
-                {accountInfo.can_trade !== undefined && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Trading Enabled:</span>
-                    <span className={accountInfo.can_trade ? 'text-green-400' : 'text-red-400'}>
-                      {accountInfo.can_trade ? '✅ Yes' : '❌ No'}
+                    <span className="text-slate-400">Environment:</span>
+                    <span className={`font-medium ${accountInfo.environment === 'live' ? 'text-red-400' : 'text-green-400'}`}>
+                      {accountInfo.environment === 'live' ? '🔴 LIVE' : '🟢 DEMO (Testnet)'}
                     </span>
                   </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">API Keys:</span>
+                    <span className="text-white font-medium">
+                      {accountInfo.has_custom_keys ? '✅ Custom' : '⚠️ Default (Shared)'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Spot Balance:</span>
+                    <span className="text-white font-medium">
+                      ${accountInfo.balance.toFixed(2)} USDT
+                    </span>
+                  </div>
+                  {accountInfo.account_type && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Account Type:</span>
+                      <span className="text-white">{accountInfo.account_type}</span>
+                    </div>
+                  )}
+                  {accountInfo.can_trade !== undefined && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Trading:</span>
+                      <span className={accountInfo.can_trade ? 'text-green-400' : 'text-red-400'}>
+                        {accountInfo.can_trade ? '✅ Enabled' : '❌ Disabled'}
+                      </span>
+                    </div>
+                  )}
+                  {accountInfo.can_withdraw !== undefined && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Withdraw:</span>
+                      <span className={accountInfo.can_withdraw ? 'text-green-400' : 'text-red-400'}>
+                        {accountInfo.can_withdraw ? '✅ Allowed' : '❌ Restricted'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Portfolio Margin Info */}
+                {accountInfo.has_portfolio_margin && accountInfo.portfolio_margin && (
+                  <div className="space-y-2 pt-2">
+                    <div className="text-xs font-semibold text-purple-400 mb-2">
+                      💼 Portfolio Margin Account
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Total Wallet Balance:</span>
+                      <span className={`font-semibold text-lg ${
+                        accountInfo.portfolio_margin.total_wallet_balance >= 0 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        ${accountInfo.portfolio_margin.total_wallet_balance.toFixed(2)} USDT
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Available Balance:</span>
+                      <span className="text-white font-medium">
+                        ${accountInfo.portfolio_margin.available_balance.toFixed(2)} USDT
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Unrealized PnL:</span>
+                      <span className={`font-medium ${
+                        accountInfo.portfolio_margin.total_unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {accountInfo.portfolio_margin.total_unrealized_pnl >= 0 ? '+' : ''}
+                        ${accountInfo.portfolio_margin.total_unrealized_pnl.toFixed(2)} USDT
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Initial Margin Used:</span>
+                      <span className="text-yellow-400">
+                        ${accountInfo.portfolio_margin.total_initial_margin.toFixed(2)} USDT
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Maintenance Margin:</span>
+                      <span className="text-orange-400">
+                        ${accountInfo.portfolio_margin.total_maint_margin.toFixed(2)} USDT
+                      </span>
+                    </div>
+                    {accountInfo.portfolio_margin.active_positions_count > 0 && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Active Positions:</span>
+                          <span className="text-white font-medium">
+                            {accountInfo.portfolio_margin.active_positions_count}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Total Unrealized Profit:</span>
+                          <span className={`font-medium ${
+                            accountInfo.portfolio_margin.total_unrealized_profit >= 0 ? 'text-green-400' : 'text-red-400'
+                          }`}>
+                            {accountInfo.portfolio_margin.total_unrealized_profit >= 0 ? '+' : ''}
+                            ${accountInfo.portfolio_margin.total_unrealized_profit.toFixed(2)} USDT
+                          </span>
+                        </div>
+                        {/* Show active positions */}
+                        {accountInfo.portfolio_margin.positions && accountInfo.portfolio_margin.positions.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-slate-700">
+                            <div className="text-xs font-semibold text-slate-300 mb-1">Open Positions:</div>
+                            <div className="space-y-1 max-h-32 overflow-y-auto">
+                              {accountInfo.portfolio_margin.positions.map((pos, idx) => (
+                                <div key={idx} className="text-xs bg-slate-900/50 p-2 rounded">
+                                  <div className="flex justify-between">
+                                    <span className="text-slate-300 font-medium">{pos.symbol}</span>
+                                    <span className={`${
+                                      parseFloat(pos.unrealizedProfit) >= 0 ? 'text-green-400' : 'text-red-400'
+                                    }`}>
+                                      {parseFloat(pos.unrealizedProfit) >= 0 ? '+' : ''}
+                                      ${parseFloat(pos.unrealizedProfit).toFixed(2)}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between text-slate-400 mt-1">
+                                    <span>Size: {parseFloat(pos.positionAmt).toFixed(4)}</span>
+                                    <span>Entry: ${parseFloat(pos.entryPrice).toFixed(2)}</span>
+                                    <span>Leverage: {pos.leverage}x</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
                 )}
+
                 {accountInfo.error && (
-                  <div className="text-red-400 text-xs mt-2">
+                  <div className="text-red-400 text-xs mt-2 pt-2 border-t border-slate-700">
                     ⚠️ {accountInfo.error}
                   </div>
                 )}
@@ -272,6 +402,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <ol className="text-xs text-blue-200 space-y-1 ml-4 list-decimal">
                 <li>Go to <a href="https://www.binance.com/en/my/settings/api-management" target="_blank" rel="noopener noreferrer" className="underline">Binance API Management</a></li>
                 <li>Create a new API key</li>
+                <li>Enable "Futures"</li>
                 <li>Enable "Enable Spot & Margin Trading"</li>
                 <li>Copy API Key and Secret here</li>
                 <li>For Testnet: Use <a href="https://testnet.binance.vision/" target="_blank" rel="noopener noreferrer" className="underline">testnet.binance.vision</a></li>

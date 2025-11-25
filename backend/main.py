@@ -14,6 +14,7 @@ import logging
 import asyncio
 
 from app.routes import market, trading, performance, ai_recommendations, charts, account, auth, settings, robot, user_settings
+from app.routes import account_comprehensive
 from app.services.binance_service import BinanceService
 from app.services.mt5_service import MT5Service
 from app.services.market_sync_service import MarketSyncService
@@ -51,6 +52,31 @@ async def lifespan(app: FastAPI):
     # Initialize database schema
     init_db()
     logger.info("✓ PostgreSQL database initialized")
+    
+    # Run migrations for new columns (if migration files exist)
+    try:
+        import sys
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        
+        # Run robot_configs.environment migration
+        try:
+            from migrate_add_environment import migrate_add_environment
+            migrate_add_environment()
+            logger.info("✓ Robot config environment migration completed")
+        except Exception as e:
+            logger.debug(f"Robot config migration (may already be applied): {e}")
+        
+        # Run api_credentials.environment migration
+        try:
+            from migrate_add_environment_to_api_credentials import migrate_add_environment_to_api_credentials
+            migrate_add_environment_to_api_credentials()
+            logger.info("✓ API credentials environment migration completed")
+        except Exception as e:
+            logger.debug(f"API credentials migration (may already be applied): {e}")
+            
+    except Exception as e:
+        logger.warning(f"Migration warning: {e}")
     
     # Initialize Binance service
     binance_service = BinanceService()
@@ -176,6 +202,7 @@ app.include_router(performance.router, prefix="/api/performance", tags=["Perform
 app.include_router(ai_recommendations.router, prefix="/api/ai", tags=["AI Recommendations"])
 app.include_router(charts.router, prefix="/api/charts", tags=["Charts"])
 app.include_router(account.router, prefix="/api/account", tags=["Account"])
+app.include_router(account_comprehensive.router, prefix="/api/account", tags=["Account"])
 app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(robot.router, prefix="/api/robot", tags=["Robot Trading"])
 app.include_router(user_settings.router, prefix="/api/user-settings", tags=["User Settings"])

@@ -224,6 +224,7 @@ export const tradingApi = {
     price?: number;
     leverage?: number;
     trading_mode?: string;
+    execution_mode?: 'demo' | 'live';
     ai_confidence?: number;
     ai_reason?: string;
     stop_loss?: number;
@@ -254,14 +255,14 @@ export const tradingApi = {
     return data.trades || [];
   },
 
-  async getTradeHistory(limit: number = 50): Promise<Trade[]> {
-    const response = await fetch(`${API_BASE_URL}/api/trading/trade-history?limit=${limit}`);
+  async getTradeHistory(limit: number = 50, env: 'demo' | 'live' = 'demo'): Promise<Trade[]> {
+    const response = await fetch(`${API_BASE_URL}/api/trading/trade-history?limit=${limit}&env=${env}`);
     const data = await response.json();
     return data.trades || [];
   },
 
-  async getPositions(): Promise<{ positions: PositionSummary[]; auto_closed?: Array<{ id: number; symbol: string; reason: string }> }> {
-    const response = await fetch(`${API_BASE_URL}/api/trading/positions`);
+  async getPositions(env: 'demo' | 'live' = 'demo'): Promise<{ positions: PositionSummary[]; auto_closed?: Array<{ id: number; symbol: string; reason: string }> }> {
+    const response = await fetch(`${API_BASE_URL}/api/trading/positions?env=${env}`);
     const data = await response.json();
     return {
       positions: data.positions || [],
@@ -272,13 +273,13 @@ export const tradingApi = {
 
 // Performance API
 export const performanceApi = {
-  async getDashboard(assetClass: string = 'crypto'): Promise<{
+  async getDashboard(assetClass: string = 'crypto', env: 'demo' | 'live' = 'demo'): Promise<{
     metrics: PerformanceMetrics;
     daily_profit: Array<{ day: string; profit: number }>;
     win_rate_distribution: Array<{ name: string; value: number }>;
   }> {
     const response = await fetch(
-      `${API_BASE_URL}/api/performance/dashboard?asset_class=${assetClass}`
+      `${API_BASE_URL}/api/performance/dashboard?asset_class=${assetClass}&env=${env}`
     );
     const data = await response.json();
     return data;

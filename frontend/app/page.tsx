@@ -174,6 +174,7 @@ export default function Home() {
               mode={tradingMode} 
               assetClass={assetClass}
               symbol={selectedSymbol}
+              environment={environment}
             />
             <AIRecommendationsDual 
               mode={tradingMode} 
@@ -188,15 +189,15 @@ export default function Home() {
           {/* Row 1: Open Positions + Performance - Stack on mobile */}
           <div className="flex flex-col md:flex-row gap-2 max-h-[200px] min-h-0">
             <div className="flex-1 min-w-0 overflow-y-auto">
-              <OpenPositionsBanner />
+              <OpenPositionsBanner environment={environment} />
             </div>
             <div className="flex-1 min-w-0 overflow-y-auto">
-              <PerformanceDashboard assetClass={assetClass} />
+              <PerformanceDashboard assetClass={assetClass} environment={environment} />
             </div>
           </div>
           {/* Row 2: Trade History - Full width */}
           <div className="flex-1 min-w-0 overflow-y-auto max-h-[200px]">
-            <TradeHistory />
+            <TradeHistory environment={environment} />
           </div>
         </div>
       </div>

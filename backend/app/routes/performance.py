@@ -28,13 +28,19 @@ def get_binance_service(request: Request):
 @router.get("/dashboard")
 async def get_performance_dashboard(
     asset_class: str = "crypto",
+    env: str = "demo",  # demo or live
     request: Optional[Request] = Depends(lambda: None),  # Optional dependency
     db: Session = Depends(get_db)
 ):
     """Get real-time performance dashboard metrics with live mark prices"""
     try:
-        # All trades
-        all_trades = db.query(Trade).all()
+        from app.models import TradeMode
+        
+        # Filter by execution_mode (demo/live)
+        execution_mode = TradeMode.DEMO if env == "demo" else TradeMode.LIVE
+        
+        # All trades filtered by environment
+        all_trades = db.query(Trade).filter(Trade.execution_mode == execution_mode).all()
         closed_trades = [t for t in all_trades if t.status == "CLOSED"]
         open_trades = [t for t in all_trades if t.status == "OPEN"]
 
@@ -92,15 +98,22 @@ async def get_performance_dashboard(
         avg_loss = abs(sum(t.profit_loss or 0 for t in losing_trades) / len(losing_trades)) if losing_trades else 1
         risk_reward = f"1:{avg_win/avg_loss:.1f}" if avg_loss > 0 else "1:0"
 
-        # Trades today (open + closed created today)
+        # Trades today (open + closed created today) - filtered by environment
         today = datetime.utcnow().date()
-        trades_today = db.query(Trade).filter(func.date(Trade.created_at) == today).count()
+        trades_today = db.query(Trade).filter(
+            Trade.execution_mode == execution_mode,
+            func.date(Trade.created_at) == today
+        ).count()
         
-        # Daily profit for last 7 days
+        # Daily profit for last 7 days - filtered by environment
         daily_profit = []
         for i in range(6, -1, -1):
             day = datetime.utcnow().date() - timedelta(days=i)
-            day_trades = [t for t in closed_trades if t.closed_at and t.closed_at.date() == day]
+            # Filter closed trades by both date and execution_mode
+            day_trades = [
+                t for t in closed_trades 
+                if t.closed_at and t.closed_at.date() == day and t.execution_mode == execution_mode
+            ]
             day_profit = sum(t.profit_loss for t in day_trades if t.profit_loss) if day_trades else 0
             daily_profit.append({
                 "day": day.strftime("%a"),
@@ -194,18 +207,28 @@ async def get_performance_stats(db: Session = Depends(get_db)):
 
 
 @router.get("/profit-chart")
-async def get_profit_chart(days: int = 30, db: Session = Depends(get_db)):
+async def get_profit_chart(
+    days: int = 30,
+    env: str = "demo",  # demo or live
+    db: Session = Depends(get_db)
+):
     """Get profit chart data for specified number of days"""
     try:
+        from app.models import TradeMode
+        
+        # Filter by execution_mode (demo/live)
+        execution_mode = TradeMode.DEMO if env == "demo" else TradeMode.LIVE
+        
         chart_data = []
         cumulative_profit = 0
         
         for i in range(days - 1, -1, -1):
             day = datetime.utcnow().date() - timedelta(days=i)
             
-            # Get trades for this day
+            # Get trades for this day - filtered by environment
             day_trades = db.query(Trade).filter(
                 Trade.status == "CLOSED",
+                Trade.execution_mode == execution_mode,
                 func.date(Trade.closed_at) == day
             ).all()
             

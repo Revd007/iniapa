@@ -322,13 +322,22 @@ async def get_open_trades(db: Session = Depends(get_db)):
 @router.get("/positions")
 async def get_positions(
     request: Request,
+    env: str = "demo",  # demo or live
     db: Session = Depends(get_db),
 ):
     """Get detailed open positions banner data with auto-close TP/SL checking."""
     try:
+        from app.models import TradeMode
+        
         binance_service = request.app.state.binance_service
 
-        trades = db.query(Trade).filter(Trade.status == "OPEN").all()
+        # Filter by execution_mode (demo/live)
+        execution_mode = TradeMode.DEMO if env == "demo" else TradeMode.LIVE
+
+        trades = db.query(Trade).filter(
+            Trade.status == "OPEN",
+            Trade.execution_mode == execution_mode
+        ).all()
 
         positions = []
         auto_closed = []
@@ -485,11 +494,19 @@ async def get_positions(
 @router.get("/trade-history")
 async def get_trade_history(
     limit: int = 50,
+    env: str = "demo",  # demo or live
     db: Session = Depends(get_db)
 ):
     """Get trade history"""
     try:
-        trades = db.query(Trade).order_by(Trade.created_at.desc()).limit(limit).all()
+        from app.models import TradeMode
+        
+        # Filter by execution_mode (demo/live)
+        execution_mode = TradeMode.DEMO if env == "demo" else TradeMode.LIVE
+        
+        trades = db.query(Trade).filter(
+            Trade.execution_mode == execution_mode
+        ).order_by(Trade.created_at.desc()).limit(limit).all()
         
         return {
             "success": True,

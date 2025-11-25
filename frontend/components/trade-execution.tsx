@@ -7,9 +7,10 @@ interface TradeExecutionProps {
   mode: 'scalper' | 'normal' | 'aggressive' | 'longhold'
   assetClass: 'stocks' | 'forex' | 'crypto'
   symbol: string
+  environment?: 'demo' | 'live'
 }
 
-export default function TradeExecution({ mode, assetClass, symbol }: TradeExecutionProps) {
+export default function TradeExecution({ mode, assetClass, symbol, environment = 'demo' }: TradeExecutionProps) {
   const [tradeType, setTradeType] = useState<'buy' | 'sell'>('buy')
   const [quantity, setQuantity] = useState('0.01')
   const [entryPrice, setEntryPrice] = useState('')
@@ -90,6 +91,7 @@ export default function TradeExecution({ mode, assetClass, symbol }: TradeExecut
         price: price,
         leverage: parseFloat(currentLeverage),
         trading_mode: mode,
+        execution_mode: environment,
         stop_loss: stopLoss ? parseFloat(stopLoss) : undefined,
         take_profit: takeProfit ? parseFloat(takeProfit) : undefined,
       })

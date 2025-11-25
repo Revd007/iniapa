@@ -6,9 +6,10 @@ import { performanceApi, type PerformanceMetrics } from '@/lib/api'
 
 interface PerformanceDashboardProps {
   assetClass: 'stocks' | 'forex' | 'crypto'
+  environment?: 'demo' | 'live'
 }
 
-export default function PerformanceDashboard({ assetClass }: PerformanceDashboardProps) {
+export default function PerformanceDashboard({ assetClass, environment = 'demo' }: PerformanceDashboardProps) {
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null)
   const [profitData, setProfitData] = useState<Array<{ day: string; profit: number }>>([])
   const [winRateData, setWinRateData] = useState<Array<{ name: string; value: number }>>([])
@@ -20,7 +21,7 @@ export default function PerformanceDashboard({ assetClass }: PerformanceDashboar
     // Real-time updates: poll every 5 seconds for live performance metrics
     const interval = setInterval(fetchPerformanceData, 5000)
     return () => clearInterval(interval)
-  }, [assetClass])
+  }, [assetClass, environment])
 
   const fetchPerformanceData = async () => {
     if (assetClass !== 'crypto') {
@@ -29,7 +30,7 @@ export default function PerformanceDashboard({ assetClass }: PerformanceDashboar
     }
 
     try {
-      const data = await performanceApi.getDashboard(assetClass)
+      const data = await performanceApi.getDashboard(assetClass, environment)
       setMetrics(data.metrics)
       setProfitData(data.daily_profit)
       setWinRateData(data.win_rate_distribution)
