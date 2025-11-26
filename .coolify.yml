@@ -22,7 +22,7 @@ ports:
 # Health check
 healthcheck:
   service: backend
-  path: /healt
+  path: /health
   interval: 30
   timeout: 10
   retries: 3
@@ -30,7 +30,6 @@ healthcheck:
 # Environment variables (set these in Coolify dashboard)
 environment:
   - NEXT_PUBLIC_API_URL
-  - NODE_ENV=production
   - DATABASE_URL
   - JWT_SECRET_KEY
   - BINANCE_API_KEY

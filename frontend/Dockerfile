@@ -3,12 +3,13 @@ FROM node:20-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
+ENV NODE_ENV=development
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # Copy package files
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm ci --silent
 
 # Rebuild the source code only when needed
 FROM base AS builder
