@@ -6,7 +6,7 @@ version: '1.0'
 # Application configuration
 application:
   name: tradanalisa
-  type: dockerfile
+  type: docker-compose
   
 # Build configuration
 build:
