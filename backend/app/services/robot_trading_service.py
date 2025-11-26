@@ -10,9 +10,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
-from app.models import RobotConfig, Trade, TradingMode, AssetClass, TradeSide, TradeStatus
+from app.models import RobotConfig, Trade, TradingMode, AssetClass, TradeSide, TradeStatus, APICredential
 from app.services.binance_service import BinanceService
 from app.database import get_db_context
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -570,9 +571,23 @@ class RobotTradingService:
             # With leverage: quantity = (capital * leverage) / entry_price
             capital = config.capital_per_trade
             leverage = config.leverage
-            quantity = (capital * leverage) / entry_price
+            raw_quantity = (capital * leverage) / entry_price
             
-            logger.info(f"💵 Trade params: Capital=${capital}, Leverage={leverage}x, Quantity={quantity:.6f}, Total=${capital * leverage:.2f}")
+            # Round quantity to match Binance Futures precision requirements
+            try:
+                # Get Futures exchange info for precision rules
+                exchange_info = await self.binance_service.get_futures_exchange_info()
+                symbols_info = exchange_info.get('symbols', [])
+                symbol_info = next((s for s in symbols_info if s['symbol'] == symbol), None)
+                
+                # Round quantity using Binance rules
+                quantity = self.binance_service.round_futures_quantity(symbol, raw_quantity, symbol_info)
+                logger.info(f"📐 Quantity rounded: {raw_quantity:.6f} → {quantity} (Binance precision rules)")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to get Futures precision rules: {e}, using 3 decimals fallback")
+                quantity = round(raw_quantity, 3)  # Fallback to 3 decimals
+            
+            logger.info(f"💵 Trade params: Capital=${capital}, Leverage={leverage}x, Quantity={quantity}, Total=${capital * leverage:.2f}")
             if stop_loss:
                 logger.info(f"🛑 Stop Loss: ${stop_loss:,.2f}")
             if take_profit:
@@ -586,6 +601,11 @@ class RobotTradingService:
             if quantity < 0.00001:  # Minimum trade size for most exchanges
                 logger.warning(f"⚠️ Quantity too small: {quantity:.8f} - may be rejected by exchange")
             
+            # Determine execution_mode based on config.environment
+            from app.models import TradeMode
+            environment = config.environment or "demo"
+            execution_mode = TradeMode.LIVE if environment == "live" else TradeMode.DEMO
+            
             # Create trade record with SL/TP
             trade = Trade(
                 user_id=config.user_id,
@@ -596,6 +616,7 @@ class RobotTradingService:
                 leverage=leverage,
                 status=TradeStatus.OPEN,
                 trading_mode=config.trading_mode,
+                execution_mode=execution_mode,  # Set execution_mode for proper filtering
                 ai_confidence=recommendation.get('confidence', 0),
                 ai_reason=recommendation.get('reason', '')[:500] if recommendation.get('reason') else None,
                 ai_model=recommendation.get('ai_model', 'unknown'),
@@ -603,6 +624,90 @@ class RobotTradingService:
                 take_profit=take_profit,
                 total_value=capital * leverage
             )
+            
+            # Execute order to Binance if environment is "live" and not paper trading
+            binance_order_id = None
+            sl_order_id = None
+            tp_order_id = None
+            
+            # Check available margin before executing live order
+            if environment == "live" and not settings.BINANCE_PAPER_TRADING:
+                # Calculate required margin
+                required_margin = (quantity * entry_price) / leverage
+                logger.info(f"💰 Required margin: ${required_margin:.2f} (for ${quantity * entry_price:.2f} notional with {leverage}x leverage)")
+            
+            if environment == "live" and not settings.BINANCE_PAPER_TRADING:
+                # Get API credentials from database
+                api_creds = db.query(APICredential).filter_by(user_id=config.user_id).first()
+                
+                if api_creds and api_creds.binance_api_key and api_creds.binance_api_secret:
+                    try:
+                        # Decrypt API keys (same logic as in settings.py)
+                        from cryptography.fernet import Fernet
+                        import base64
+                        import hashlib
+                        encryption_key = base64.urlsafe_b64encode(hashlib.sha256(b"nof1trading_secret_key").digest())
+                        cipher = Fernet(encryption_key)
+                        
+                        api_key = cipher.decrypt(api_creds.binance_api_key.encode()).decode()
+                        api_secret = cipher.decrypt(api_creds.binance_api_secret.encode()).decode()
+                        
+                        # Create BinanceService instance for live trading
+                        binance_service = BinanceService()
+                        binance_service.api_key = api_key
+                        binance_service.api_secret = api_secret
+                        binance_service.testnet = False  # Live mode
+                        binance_service.base_url = "https://api.binance.com/api"
+                        await binance_service.initialize()
+                        
+                        # Execute order to Binance Futures
+                        logger.info(f"🚀 Executing Futures order to Binance LIVE: {signal} {quantity:.6f} {symbol} @ ${entry_price:.2f}")
+                        
+                        # Use Futures API for Futures trading
+                        order_response = await binance_service.create_futures_order(
+                            symbol=symbol,
+                            side=signal,
+                            order_type="MARKET",  # Use MARKET for robot trading
+                            quantity=quantity,
+                            price=None,
+                            stop_loss=stop_loss,
+                            take_profit=take_profit,
+                            position_side="BOTH",  # BOTH allows both long and short positions
+                            leverage=leverage  # Set leverage before order
+                        )
+                        
+                        # Extract order IDs
+                        main_order = order_response.get('main_order', order_response)
+                        binance_order_id = str(main_order.get('orderId', ''))
+                        
+                        if 'stop_loss_order' in order_response:
+                            sl_order_id = str(order_response['stop_loss_order'].get('orderId', ''))
+                        if 'take_profit_order' in order_response:
+                            tp_order_id = str(order_response['take_profit_order'].get('orderId', ''))
+                        
+                        # Update trade with Binance order IDs
+                        trade.binance_order_id = binance_order_id
+                        trade.sl_order_id = sl_order_id
+                        trade.tp_order_id = tp_order_id
+                        
+                        logger.info(f"✅ Order executed on Binance: OrderID={binance_order_id}, SL={sl_order_id}, TP={tp_order_id}")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Failed to execute order to Binance: {e}", exc_info=True)
+                        # Continue with database trade record even if Binance execution fails
+                        logger.warning("⚠️ Trade saved to database but NOT executed on Binance")
+                    finally:
+                        # Always close session to prevent memory leaks
+                        try:
+                            await binance_service.close()
+                        except:
+                            pass  # Ignore close errors
+                else:
+                    logger.warning("⚠️ No API credentials found for live trading - trade saved to database only")
+            elif environment == "demo":
+                logger.info(f"📝 Demo mode: Trade saved to database only (not executed on Binance)")
+            else:
+                logger.info(f"📝 Paper trading mode: Trade saved to database only (not executed on Binance)")
             
             db.add(trade)
             
@@ -614,7 +719,8 @@ class RobotTradingService:
             
             sl_info = f", SL=${stop_loss:,.2f}" if stop_loss else ""
             tp_info = f", TP=${take_profit:,.2f}" if take_profit else ""
-            logger.info(f"✅ Trade executed: {signal} {quantity:.6f} {symbol} @ ${entry_price:.2f} (Leverage: {leverage}x, Confidence: {recommendation.get('confidence', 0)}%{sl_info}{tp_info})")
+            binance_info = f", Binance OrderID={binance_order_id}" if binance_order_id else ""
+            logger.info(f"✅ Trade executed: {signal} {quantity:.6f} {symbol} @ ${entry_price:.2f} (Leverage: {leverage}x, Confidence: {recommendation.get('confidence', 0)}%{sl_info}{tp_info}{binance_info})")
         
         except Exception as e:
             logger.error(f"Failed to execute trade: {e}", exc_info=True)

@@ -22,7 +22,7 @@ export default function Home() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC')
   const [showLeftSidebar, setShowLeftSidebar] = useState(true)
   const [showRightSidebar, setShowRightSidebar] = useState(true)
-  const [environment, setEnvironment] = useState<'demo' | 'live'>('demo')
+  const [environment, setEnvironment] = useState<'demo' | 'live'>('live')  // Default to 'live' for Futures trading
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col">

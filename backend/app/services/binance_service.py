@@ -53,7 +53,7 @@ class BinanceService:
         # Logging throttling to prevent spam
         self._last_log_time = None
         self._log_interval = 10.0  # Only log rate limit warnings every 10 seconds max
-        
+    
         # Circuit breaker for geolocation restriction
         # Once detected, stop making requests for a period to prevent spam
         self._geolocation_blocked = False
@@ -183,10 +183,19 @@ class BinanceService:
         url = f"{self.base_url}{endpoint}"
         params = params or {}
         
+        # Log the URL being used for debugging
+        logger.debug(f"Making request to: {url} (testnet: {self.testnet}, base_url: {self.base_url})")
+        
         # Validate URL - ensure we're not being redirected
         if 'internet-positif' in url.lower() or 'binance' not in url.lower():
             logger.error(f"⚠️ Invalid URL detected: {url}. This might indicate DNS hijacking or ISP blocking.")
             raise Exception("Invalid API URL detected. This might indicate DNS hijacking or ISP blocking. Please check your network settings or use VPN.")
+        
+        # Warn if we're using testnet URL but testnet flag is False (or vice versa)
+        if 'testnet.binance.vision' in url and not self.testnet:
+            logger.warning(f"⚠️ Mismatch detected: Using testnet URL but testnet=False. URL: {url}, testnet: {self.testnet}")
+        elif 'api.binance.com' in url and self.testnet:
+            logger.warning(f"⚠️ Mismatch detected: Using production URL but testnet=True. URL: {url}, testnet: {self.testnet}")
         
         headers = {}
         if self.api_key:
@@ -310,6 +319,77 @@ class BinanceService:
         """Get exchange trading rules and symbol information (weight: 10)"""
         return await self._request("GET", "/v3/exchangeInfo", weight=10)
     
+    async def get_futures_exchange_info(self) -> Dict:
+        """Get Futures exchange trading rules and symbol information (weight: 1)"""
+        if self.testnet:
+            futures_base_url = "https://testnet.binancefuture.com"
+        else:
+            futures_base_url = "https://fapi.binance.com"
+        
+        await self._wait_for_rate_limit(1)
+        
+        if not self.session:
+            await self.initialize()
+        
+        try:
+            url = f"{futures_base_url}/fapi/v1/exchangeInfo"
+            async with self.session.get(url, timeout=30) as response:
+                data = await response.json()
+                return data
+        except Exception as e:
+            logger.error(f"Failed to get Futures exchange info: {e}")
+            return {}
+    
+    def round_futures_quantity(self, symbol: str, quantity: float, symbol_info: Dict = None) -> float:
+        """
+        Round quantity according to Binance Futures LOT_SIZE filter
+        
+        Args:
+            symbol: Trading pair (e.g., "BTCUSDT")
+            quantity: Raw quantity to round
+            symbol_info: Optional symbol info from exchange_info (for caching)
+        
+        Returns:
+            Rounded quantity that conforms to Binance rules
+        """
+        try:
+            if not symbol_info:
+                return quantity  # Fallback: use original quantity
+            
+            # Find LOT_SIZE filter
+            filters = symbol_info.get('filters', [])
+            lot_size_filter = next((f for f in filters if f['filterType'] == 'LOT_SIZE'), None)
+            
+            if not lot_size_filter:
+                logger.warning(f"No LOT_SIZE filter found for {symbol}, using 3 decimals")
+                return round(quantity, 3)  # Default to 3 decimals
+            
+            step_size = float(lot_size_filter['stepSize'])
+            min_qty = float(lot_size_filter['minQty'])
+            max_qty = float(lot_size_filter['maxQty'])
+            
+            # Calculate precision from step_size (e.g., 0.001 = 3 decimals, 0.01 = 2 decimals)
+            precision = len(str(step_size).rstrip('0').split('.')[-1]) if '.' in str(step_size) else 0
+            
+            # Round to step_size
+            rounded_qty = round(quantity / step_size) * step_size
+            rounded_qty = round(rounded_qty, precision)  # Clean up floating point errors
+            
+            # Ensure within min/max bounds
+            if rounded_qty < min_qty:
+                logger.warning(f"Quantity {rounded_qty} < min {min_qty}, adjusting to min")
+                rounded_qty = min_qty
+            elif rounded_qty > max_qty:
+                logger.warning(f"Quantity {rounded_qty} > max {max_qty}, adjusting to max")
+                rounded_qty = max_qty
+            
+            logger.info(f"Rounded quantity for {symbol}: {quantity:.6f} → {rounded_qty:.{precision}f} (step={step_size}, precision={precision})")
+            return rounded_qty
+            
+        except Exception as e:
+            logger.error(f"Error rounding quantity for {symbol}: {e}, using default 3 decimals")
+            return round(quantity, 3)  # Fallback
+    
     async def get_klines(
         self, 
         symbol: str, 
@@ -382,6 +462,197 @@ class BinanceService:
             logger.error(f"Failed to create order: {str(e)}")
             raise
     
+    async def set_futures_leverage(
+        self,
+        symbol: str,
+        leverage: int
+    ) -> Dict:
+        """
+        Change initial leverage for a symbol
+        Reference: https://binance-docs.github.io/apidocs/futures/en/#change-initial-leverage-trade
+        
+        Args:
+            symbol: Trading pair (e.g., "BTCUSDT")
+            leverage: Leverage value (1-125)
+        """
+        if self.testnet:
+            futures_base_url = "https://testnet.binancefuture.com"
+        else:
+            futures_base_url = "https://fapi.binance.com"
+        
+        await self._wait_for_rate_limit(1)
+        
+        if not self.session:
+            await self.initialize()
+        
+        params = {
+            "symbol": symbol,
+            "leverage": leverage,
+            "timestamp": int(time.time() * 1000)
+        }
+        params['signature'] = self._generate_signature(params)
+        
+        headers = {}
+        if self.api_key:
+            headers['X-MBX-APIKEY'] = self.api_key
+        
+        try:
+            url = f"{futures_base_url}/fapi/v1/leverage"
+            async with self.session.post(url, params=params, headers=headers, timeout=30) as response:
+                data = await response.json()
+                if response.status != 200:
+                    error_msg = data.get('msg', 'Unknown error')
+                    logger.error(f"Failed to set leverage for {symbol}: {error_msg}")
+                    raise Exception(f"Set leverage error: {error_msg}")
+                
+                logger.info(f"✅ Leverage set to {leverage}x for {symbol}")
+                return data
+        except Exception as e:
+            logger.error(f"Failed to set leverage: {e}")
+            raise
+    
+    async def create_futures_order(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        quantity: float,
+        price: Optional[float] = None,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        position_side: str = "BOTH",  # BOTH, LONG, or SHORT
+        leverage: Optional[int] = None  # Set leverage before order
+    ) -> Dict:
+        """
+        Create a Futures order on Binance
+        Reference: https://binance-docs.github.io/apidocs/futures/en/#new-order-trade
+        
+        Args:
+            symbol: Trading pair (e.g., "BTCUSDT")
+            side: "BUY" or "SELL"
+            order_type: "MARKET" or "LIMIT"
+            quantity: Order quantity
+            price: Order price (required for LIMIT orders)
+            stop_loss: Stop loss price (optional)
+            take_profit: Take profit price (optional)
+            position_side: "BOTH", "LONG", or "SHORT" (default: "BOTH")
+            leverage: Leverage value (1-125, optional - will be set before order)
+        """
+        # Set leverage first if specified
+        if leverage:
+            try:
+                await self.set_futures_leverage(symbol, leverage)
+            except Exception as e:
+                logger.warning(f"Failed to set leverage to {leverage}x: {e} - continuing with current leverage")
+        if self.testnet:
+            futures_base_url = "https://testnet.binancefuture.com"
+        else:
+            futures_base_url = "https://fapi.binance.com"
+        
+        # Apply rate limiting (Futures order endpoint weight: 1)
+        await self._wait_for_rate_limit(1)
+        
+        if not self.session:
+            await self.initialize()
+        
+        # Prepare main order parameters
+        params = {
+            "symbol": symbol,
+            "side": side,
+            "type": order_type,
+            "quantity": str(quantity),
+            "positionSide": position_side,
+            "newOrderRespType": "RESULT"  # Get full order details
+        }
+        
+        if order_type == "LIMIT":
+            if price is None:
+                raise ValueError("Price is required for LIMIT orders")
+            params["price"] = str(price)
+            params["timeInForce"] = "GTC"
+        
+        # Add timestamp and signature
+        params['timestamp'] = int(time.time() * 1000)
+        params['signature'] = self._generate_signature(params)
+        
+        headers = {}
+        if self.api_key:
+            headers['X-MBX-APIKEY'] = self.api_key
+        
+        try:
+            url = f"{futures_base_url}/fapi/v1/order"
+            async with self.session.request("POST", url, params=params, headers=headers, timeout=30) as response:
+                content_type = response.headers.get('Content-Type', '')
+                if 'text/html' in content_type.lower():
+                    text = await response.text()
+                    if 'internet-positif' in text.lower():
+                        logger.error(f"⚠️ ISP Blocking in Futures Order! URL: {url}")
+                        raise Exception("ISP blocking detected: Binance is blocked. Please use VPN.")
+                    raise Exception(f"Unexpected HTML response from Futures Order API: {url}")
+                
+                data = await response.json()
+                
+                if response.status != 200:
+                    error_msg = data.get('msg', 'Unknown error')
+                    error_code = data.get('code', 'N/A')
+                    logger.error(f"Futures order error [{error_code}]: {error_msg}")
+                    raise Exception(f"Futures order error: {error_msg}")
+                
+                result = {"main_order": data}
+                
+                # Create stop loss order if specified
+                if stop_loss:
+                    sl_side = "SELL" if side == "BUY" else "BUY"
+                    sl_params = {
+                        "symbol": symbol,
+                        "side": sl_side,
+                        "type": "STOP_MARKET",  # Futures uses STOP_MARKET
+                        "quantity": str(quantity),
+                        "stopPrice": str(stop_loss),
+                        "positionSide": position_side,
+                        "newOrderRespType": "RESULT"
+                    }
+                    sl_params['timestamp'] = int(time.time() * 1000)
+                    sl_params['signature'] = self._generate_signature(sl_params)
+                    
+                    async with self.session.request("POST", url, params=sl_params, headers=headers, timeout=30) as sl_response:
+                        sl_data = await sl_response.json()
+                        if sl_response.status == 200:
+                            result["stop_loss_order"] = sl_data
+                            logger.info(f"Stop loss order created: {sl_data.get('orderId')}")
+                        else:
+                            logger.warning(f"Failed to create stop loss order: {sl_data.get('msg')}")
+                
+                # Create take profit order if specified
+                if take_profit:
+                    tp_side = "SELL" if side == "BUY" else "BUY"
+                    tp_params = {
+                        "symbol": symbol,
+                        "side": tp_side,
+                        "type": "TAKE_PROFIT_MARKET",  # Futures uses TAKE_PROFIT_MARKET
+                        "quantity": str(quantity),
+                        "stopPrice": str(take_profit),
+                        "positionSide": position_side,
+                        "newOrderRespType": "RESULT"
+                    }
+                    tp_params['timestamp'] = int(time.time() * 1000)
+                    tp_params['signature'] = self._generate_signature(tp_params)
+                    
+                    async with self.session.request("POST", url, params=tp_params, headers=headers, timeout=30) as tp_response:
+                        tp_data = await tp_response.json()
+                        if tp_response.status == 200:
+                            result["take_profit_order"] = tp_data
+                            logger.info(f"Take profit order created: {tp_data.get('orderId')}")
+                        else:
+                            logger.warning(f"Failed to create take profit order: {tp_data.get('msg')}")
+                
+                logger.info(f"✅ Futures order created: {data.get('orderId')} for {symbol}")
+                return result
+                
+        except Exception as e:
+            logger.error(f"Failed to create Futures order: {str(e)}")
+            raise
+    
     async def cancel_order(self, symbol: str, order_id: str) -> Dict:
         """Cancel an order on Binance"""
         try:
@@ -419,6 +690,9 @@ class BinanceService:
         
         url = f"{futures_base_url}/fapi/v2/account"
         params = {}
+        
+        # Log the URL being used for debugging
+        logger.debug(f"Fetching Futures account from: {url} (testnet: {self.testnet})")
         
         headers = {}
         if self.api_key:

@@ -106,38 +106,76 @@ async def get_account_info(
             # Set testnet mode: demo = True (testnet), live = False (production)
             binance_service.testnet = (custom_env == 'demo')
             
-            # Update base URL based on testnet mode
+            # Update base URL based on testnet mode - MUST be set before any requests
+            # base_url is used when making requests, so we don't need to reinitialize session
             if binance_service.testnet:
                 binance_service.base_url = settings.BINANCE_TESTNET_BASE_URL
             else:
                 binance_service.base_url = "https://api.binance.com/api"
             
+            # Only initialize session if it doesn't exist
+            # Don't reinitialize if it exists to avoid "Connector is closed" errors
+            if not binance_service.session:
+                await binance_service.initialize()
+            
             logger.info(f"Binance service configured - testnet: {binance_service.testnet}, base_url: {binance_service.base_url}, env: {custom_env}")
             
             # Get account info from Binance
-            # Try Spot account first
+            # Always try Futures account first (preferred for Futures trading)
+            # If Futures fails, fallback to Spot account
             account = None
             futures_account = None
-            account_type = ''
+            account_type = 'SPOT'  # Default to SPOT, will be changed if Futures succeeds
             
             try:
-                account = await binance_service.get_account()
-                permissions = account.get('permissions', [])
+                # Try Futures account first (preferred for Futures trading)
+                try:
+                    logger.info(f"🔄 Attempting to fetch Futures account for {custom_env} mode...")
+                    futures_account = await binance_service.get_futures_account_info()
+                    if futures_account:
+                        account_type = 'FUTURES'
+                        total_wallet = float(futures_account.get('totalWalletBalance', 0))
+                        available = float(futures_account.get('availableBalance', 0))
+                        logger.info(f"✅ Futures account detected! Total Balance: {total_wallet}, Available: {available}, Account Type: {account_type}")
+                    else:
+                        logger.warning("Futures account response is empty, falling back to Spot")
+                except Exception as e:
+                    logger.warning(f"⚠️ Futures account fetch failed: {e}")
+                    logger.info("🔄 Falling back to Spot account...")
                 
-                # Check if Futures permission is enabled
-                has_futures_permission = 'FUTURES' in permissions or 'Enable Futures' in str(permissions)
-                
-                if has_futures_permission:
-                    # Try to get Futures account
+                # If Futures failed or empty, try Spot account
+                # But don't overwrite account_type if Futures already succeeded
+                if not futures_account:
                     try:
-                        futures_account = await binance_service.get_futures_account_info()
-                        if futures_account:
-                            account_type = 'FUTURES'
-                            logger.info("Futures account detected, using Futures account info")
+                        account = await binance_service.get_account()
+                        logger.info(f"✅ Spot account info fetched successfully for {custom_env} mode")
+                        permissions = account.get('permissions', [])
+                        logger.info(f"Account permissions: {permissions}")
+                        # Only set to SPOT if Futures didn't succeed
+                        if account_type != 'FUTURES':
+                            account_type = 'SPOT'
+                            logger.info(f"📌 Account type set to SPOT (Futures not available)")
                     except Exception as e:
-                        logger.warning(f"Futures account fetch failed, using Spot account: {e}")
+                        if futures_account:
+                            # If we have Futures but Spot failed, that's okay - use Futures
+                            logger.warning(f"Spot account fetch failed but we have Futures: {e}")
+                            account_type = 'FUTURES'
+                        else:
+                            # Both failed
+                            logger.error(f"❌ Both Futures and Spot account fetch failed: {e}")
+                            raise
+                else:
+                    # Futures succeeded, but still try to get Spot account for permissions
+                    try:
+                        account = await binance_service.get_account()
+                        permissions = account.get('permissions', [])
+                        logger.info(f"✅ Spot account info fetched for permissions: {permissions}")
+                        logger.info(f"📌 Account type remains FUTURES (Futures account available)")
+                    except Exception as e:
+                        logger.warning(f"Spot account fetch failed but we have Futures: {e}")
+                        account = None
             except Exception as e:
-                logger.error(f"Failed to fetch account info: {e}")
+                logger.error(f"❌ Failed to fetch account info: {e}", exc_info=True)
                 return {
                     "success": False,
                     "environment": custom_env,
@@ -164,17 +202,27 @@ async def get_account_info(
             
             # Extract balance info
             usdt_balance = 0
+            total_wallet_balance = 0
+            total_unrealized_pnl = 0
+            
             if account_type == 'FUTURES' and futures_account:
                 # Use Futures account balance
                 usdt_balance = float(futures_account.get('availableBalance', 0))
                 total_wallet_balance = float(futures_account.get('totalWalletBalance', 0))
                 total_unrealized_pnl = float(futures_account.get('totalUnrealizedProfit', 0))
-            else:
+                logger.info(f"💰 Futures balance extracted: Available={usdt_balance}, Total={total_wallet_balance}, Unrealized PnL={total_unrealized_pnl}")
+            elif account:
                 # Use Spot account balance
                 balances = account.get('balances', []) if account else []
                 usdt_balance = next((float(b['free']) for b in balances if b['asset'] == 'USDT'), 0)
                 total_wallet_balance = usdt_balance
                 total_unrealized_pnl = 0
+                logger.info(f"💰 Spot balance extracted: USDT={usdt_balance}, Total balances count={len(balances)}")
+                # Log all balances for debugging
+                if balances:
+                    logger.debug(f"All balances: {[(b['asset'], b['free']) for b in balances[:5]]}")  # Log first 5
+            else:
+                logger.warning("⚠️ No account data available to extract balance")
             
             # Extract detailed info from UM account if available
             um_assets = um_account_detail.get('assets', []) if um_account_detail else []
@@ -209,18 +257,23 @@ async def get_account_info(
                 if 'FUTURES' not in permissions:
                     permissions.append('FUTURES')
             
+            # Log final account type and balance for debugging
+            logger.info(f"📊 Final account info - Type: {account_type}, Balance: {usdt_balance}, Environment: {custom_env}")
+            
             response = {
                 "success": True,
                 "environment": custom_env,
                 "has_custom_keys": bool(api_creds and api_creds.binance_api_key),
                 "balance": usdt_balance,
-                "account_type": account_type,
+                "account_type": account_type,  # FUTURES or SPOT
                 "can_trade": account.get('canTrade', False) if account else True,
                 "can_withdraw": account.get('canWithdraw', False) if account else False,
                 "can_deposit": account.get('canDeposit', False) if account else False,
                 "permissions": permissions,
                 "has_portfolio_margin": um_account_detail is not None and len(um_assets) > 0,
             }
+            
+            logger.info(f"📤 Returning response - account_type: {response['account_type']}, balance: {response['balance']}")
             
             # Add Portfolio Margin details if available
             if um_account_detail and usdt_um_asset:
@@ -241,6 +294,7 @@ async def get_account_info(
             return response
         finally:
             # Restore original keys and testnet mode
+            # Just restore the values - don't reinitialize session to avoid "Connector is closed" errors
             binance_service.api_key = original_key
             binance_service.api_secret = original_secret
             binance_service.testnet = original_testnet

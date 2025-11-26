@@ -255,13 +255,13 @@ export const tradingApi = {
     return data.trades || [];
   },
 
-  async getTradeHistory(limit: number = 50, env: 'demo' | 'live' = 'demo'): Promise<Trade[]> {
+  async getTradeHistory(limit: number = 50, env: 'demo' | 'live' = 'live'): Promise<Trade[]> {
     const response = await fetch(`${API_BASE_URL}/api/trading/trade-history?limit=${limit}&env=${env}`);
     const data = await response.json();
     return data.trades || [];
   },
 
-  async getPositions(env: 'demo' | 'live' = 'demo'): Promise<{ positions: PositionSummary[]; auto_closed?: Array<{ id: number; symbol: string; reason: string }> }> {
+  async getPositions(env: 'demo' | 'live' = 'live'): Promise<{ positions: PositionSummary[]; auto_closed?: Array<{ id: number; symbol: string; reason: string }> }> {
     const response = await fetch(`${API_BASE_URL}/api/trading/positions?env=${env}`);
     const data = await response.json();
     return {
@@ -273,7 +273,7 @@ export const tradingApi = {
 
 // Performance API
 export const performanceApi = {
-  async getDashboard(assetClass: string = 'crypto', env: 'demo' | 'live' = 'demo'): Promise<{
+  async getDashboard(assetClass: string = 'crypto', env: 'demo' | 'live' = 'live'): Promise<{
     metrics: PerformanceMetrics;
     daily_profit: Array<{ day: string; profit: number }>;
     win_rate_distribution: Array<{ name: string; value: number }>;
@@ -409,18 +409,24 @@ export const robotApi = {
     const response = await fetch(`${API_BASE_URL}/api/robot/start?environment=${environment}`, {
       method: 'POST',
     });
-    if (!response.ok) throw new Error('Failed to start robot');
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: 'Failed to start robot' }));
+      throw new Error(errorData.detail || errorData.message || 'Failed to start robot');
+    }
     return await response.json();
   },
 
   /**
    * Stop robot trading
    */
-  async stop(environment: 'demo' | 'live' = 'demo'): Promise<{ success: boolean; message: string; enabled: boolean; environment?: string }> {
+  async stop(environment: 'demo' | 'live' = 'live'): Promise<{ success: boolean; message: string; enabled: boolean; environment?: string }> {
     const response = await fetch(`${API_BASE_URL}/api/robot/stop?environment=${environment}`, {
       method: 'POST',
     });
-    if (!response.ok) throw new Error('Failed to stop robot');
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: 'Failed to stop robot' }));
+      throw new Error(errorData.detail || errorData.message || 'Failed to stop robot');
+    }
     return await response.json();
   },
 

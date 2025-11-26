@@ -107,15 +107,35 @@ async def execute_trade(
             try:
                 logger.info(f"🚀 Executing real order to Binance {'TESTNET' if settings.BINANCE_TESTNET else 'LIVE'}: {symbol} {trade_request.side}")
                 
-                order_response = await binance_service.create_order(
-                    symbol=symbol,
-                    side=trade_request.side,
-                    order_type=trade_request.order_type,
-                    quantity=trade_request.quantity,
-                    price=trade_request.price if trade_request.order_type == "LIMIT" else None,
-                    stop_loss=trade_request.stop_loss,
-                    take_profit=trade_request.take_profit
-                )
+                # Use Futures API for Futures trading (preferred)
+                # Try Futures first, fallback to Spot if Futures fails
+                order_response = None
+                try:
+                    logger.info(f"🔄 Attempting Futures order...")
+                    order_response = await binance_service.create_futures_order(
+                        symbol=symbol,
+                        side=trade_request.side,
+                        order_type=trade_request.order_type,
+                        quantity=trade_request.quantity,
+                        price=trade_request.price if trade_request.order_type == "LIMIT" else None,
+                        stop_loss=trade_request.stop_loss,
+                        take_profit=trade_request.take_profit,
+                        position_side="BOTH"
+                    )
+                    logger.info("✅ Futures order executed successfully")
+                except Exception as futures_error:
+                    logger.warning(f"⚠️ Futures order failed: {futures_error}, falling back to Spot order...")
+                    # Fallback to Spot order
+                    order_response = await binance_service.create_order(
+                        symbol=symbol,
+                        side=trade_request.side,
+                        order_type=trade_request.order_type,
+                        quantity=trade_request.quantity,
+                        price=trade_request.price if trade_request.order_type == "LIMIT" else None,
+                        stop_loss=trade_request.stop_loss,
+                        take_profit=trade_request.take_profit
+                    )
+                    logger.info("✅ Futures order executed successfully")
                 
                 # Handle order response structure
                 main_order = order_response.get('main_order', order_response)
@@ -331,6 +351,10 @@ async def get_positions(
         
         binance_service = request.app.state.binance_service
 
+        # Normalize env (accept production as alias for live)
+        if env.lower() == "production":
+            env = "live"
+        
         # Filter by execution_mode (demo/live)
         execution_mode = TradeMode.DEMO if env == "demo" else TradeMode.LIVE
 
@@ -338,6 +362,26 @@ async def get_positions(
             Trade.status == "OPEN",
             Trade.execution_mode == execution_mode
         ).all()
+        
+        logger.info(f"📊 Fetching positions for env={env}, execution_mode={execution_mode.value}, found={len(trades)} trades")
+        
+        # Temporary fix: If requesting LIVE but no trades found, also check DEMO
+        # This helps during migration from DEMO to LIVE
+        if env == "live" and len(trades) == 0:
+            logger.info("⚠️ No LIVE trades found, checking DEMO trades as fallback...")
+            demo_trades = db.query(Trade).filter(
+                Trade.status == "OPEN",
+                Trade.execution_mode == TradeMode.DEMO
+            ).all()
+            
+            if demo_trades:
+                logger.warning(f"Found {len(demo_trades)} OPEN trades in DEMO mode - auto-migrating to LIVE")
+                # Auto-migrate these trades to LIVE
+                for trade in demo_trades:
+                    trade.execution_mode = TradeMode.LIVE
+                    logger.info(f"  Migrated {trade.symbol} to LIVE mode")
+                db.commit()
+                trades = demo_trades  # Use the migrated trades
 
         positions = []
         auto_closed = []
@@ -491,6 +535,41 @@ async def get_positions(
         logger.error(f"Failed to get positions: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/update-execution-mode")
+async def update_execution_mode(
+    from_mode: str = "demo",
+    to_mode: str = "live",
+    db: Session = Depends(get_db)
+):
+    """Update execution_mode for all OPEN trades (admin utility)"""
+    try:
+        from app.models import TradeMode
+        
+        from_execution_mode = TradeMode.DEMO if from_mode == "demo" else TradeMode.LIVE
+        to_execution_mode = TradeMode.DEMO if to_mode == "demo" else TradeMode.LIVE
+        
+        # Find all OPEN trades with from_mode
+        trades = db.query(Trade).filter(
+            Trade.status == "OPEN",
+            Trade.execution_mode == from_execution_mode
+        ).all()
+        
+        logger.info(f"📊 Updating {len(trades)} OPEN trades from {from_mode} to {to_mode}")
+        
+        for trade in trades:
+            trade.execution_mode = to_execution_mode
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"Updated {len(trades)} trades from {from_mode} to {to_mode}",
+            "count": len(trades)
+        }
+    except Exception as e:
+        logger.error(f"Failed to update execution mode: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/trade-history")
 async def get_trade_history(
     limit: int = 50,
@@ -500,6 +579,10 @@ async def get_trade_history(
     """Get trade history"""
     try:
         from app.models import TradeMode
+        
+        # Normalize env (accept production as alias for live)
+        if env.lower() == "production":
+            env = "live"
         
         # Filter by execution_mode (demo/live)
         execution_mode = TradeMode.DEMO if env == "demo" else TradeMode.LIVE

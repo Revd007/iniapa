@@ -9,7 +9,7 @@ interface PerformanceDashboardProps {
   environment?: 'demo' | 'live'
 }
 
-export default function PerformanceDashboard({ assetClass, environment = 'demo' }: PerformanceDashboardProps) {
+export default function PerformanceDashboard({ assetClass, environment = 'live' }: PerformanceDashboardProps) {
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null)
   const [profitData, setProfitData] = useState<Array<{ day: string; profit: number }>>([])
   const [winRateData, setWinRateData] = useState<Array<{ name: string; value: number }>>([])

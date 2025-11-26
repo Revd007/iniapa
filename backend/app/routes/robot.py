@@ -228,7 +228,7 @@ async def trigger_manual_scan(
 
 @router.post("/start")
 async def start_robot(
-    environment: str = "demo",  # 'demo' or 'live'
+    environment: str = Query("demo", description="Environment: demo or live"),
     db: Session = Depends(get_db),
     user_id: int = 1  # TODO: Get from auth context
 ):
@@ -245,9 +245,13 @@ async def start_robot(
         environment: 'demo' or 'live' - determines which API keys to use
     """
     try:
-        # Validate environment
+        # Normalize and validate environment (accept production as alias for live)
+        environment = environment.lower().strip() if environment else "demo"
+        if environment == "production":
+            environment = "live"  # Treat production as live
         if environment not in ["demo", "live"]:
-            raise HTTPException(status_code=400, detail="Environment must be 'demo' or 'live'")
+            logger.warning(f"Invalid environment '{environment}', defaulting to 'demo'")
+            environment = "demo"  # Default to demo instead of throwing error
         
         # Enable robot in config and set environment
         config = RobotConfigService.get_config(db, user_id)
@@ -290,12 +294,19 @@ async def stop_robot(
     to ensure robot is stopped before environment change.
     """
     try:
+        # Normalize and validate environment (accept production as alias for live)
+        environment = environment.lower().strip() if environment else "demo"
+        if environment == "production":
+            environment = "live"  # Treat production as live
+        if environment not in ["demo", "live"]:
+            logger.warning(f"Invalid environment '{environment}', defaulting to 'demo'")
+            environment = "demo"  # Default to demo instead of throwing error
+        
         # Disable robot in config
         config = RobotConfigService.get_config(db, user_id)
         config.enabled = False
-        # Update environment if provided
-        if environment in ["demo", "live"]:
-            config.environment = environment
+        # Update environment (already validated above)
+        config.environment = environment
         db.commit()
         
         # Stop robot service (pass user_id and environment to update database)

@@ -19,7 +19,7 @@ export default function Header({ assetClass, onEnvironmentChange }: HeaderProps)
 
   const displayAsset = assetClass && assetNames[assetClass]
 
-  const [env, setEnv] = useState<EnvironmentType>('demo')
+  const [env, setEnv] = useState<EnvironmentType>('live')  // Default to 'live' for Futures trading
   const [balance, setBalance] = useState<number>(0)
   const [summary, setSummary] = useState<AccountSummary | null>(null)
   const [isInitialized, setIsInitialized] = useState(false)

@@ -49,7 +49,7 @@ interface AccountInfo {
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [apiKey, setApiKey] = useState('')
   const [apiSecret, setApiSecret] = useState('')
-  const [environment, setEnvironment] = useState<'demo' | 'live'>('demo')
+  const [environment, setEnvironment] = useState<'demo' | 'live'>('live')  // Default to 'live' for Futures trading
   const [loading, setLoading] = useState(false)
   const [accountInfo, setAccountInfo] = useState<AccountInfo | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)

@@ -26,7 +26,7 @@ interface TradeHistoryProps {
   environment?: 'demo' | 'live'
 }
 
-export default function TradeHistory({ environment = 'demo' }: TradeHistoryProps) {
+export default function TradeHistory({ environment = 'live' }: TradeHistoryProps) {
   const [trades, setTrades] = useState<Trade[]>([])
   const [loading, setLoading] = useState(true)
 

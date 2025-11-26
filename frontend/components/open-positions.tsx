@@ -7,7 +7,7 @@ interface OpenPositionsBannerProps {
   environment?: 'demo' | 'live'
 }
 
-export default function OpenPositionsBanner({ environment = 'demo' }: OpenPositionsBannerProps) {
+export default function OpenPositionsBanner({ environment = 'live' }: OpenPositionsBannerProps) {
   const [positions, setPositions] = useState<PositionSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [closing, setClosing] = useState<number | null>(null)

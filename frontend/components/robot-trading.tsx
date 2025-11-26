@@ -41,7 +41,7 @@ const DEFAULT_CONFIG: RobotConfig = {
   capitalPerTrade: 5,
 }
 
-export default function RobotTrading({ mode, assetClass, environment = 'demo' }: RobotTradingProps) {
+export default function RobotTrading({ mode, assetClass, environment = 'live' }: RobotTradingProps) {
   // State management
   const [config, setConfigState] = useState<RobotConfig>(DEFAULT_CONFIG)
   const [mounted, setMounted] = useState(false)
@@ -111,12 +111,16 @@ export default function RobotTrading({ mode, assetClass, environment = 'demo' }:
       // Stop robot when environment changes
       const stopRobot = async () => {
         try {
-          await robotApi.stop(environment)
+          // Normalize environment to 'demo' or 'live'
+          const normalizedEnv = (environment === 'live' ? 'live' : 'demo') as 'demo' | 'live'
+          await robotApi.stop(normalizedEnv)
           setConfigState(prev => ({ ...prev, enabled: false }))
           await loadConfigFromBackend()
-          console.log(`✅ Robot stopped due to environment change to ${environment}`)
+          console.log(`✅ Robot stopped due to environment change to ${normalizedEnv}`)
         } catch (error) {
-          console.error('Failed to stop robot on environment change:', error)
+          const errorMessage = error instanceof Error ? error.message : 'Failed to stop robot'
+          console.error('Failed to stop robot on environment change:', errorMessage)
+          // Don't show alert for auto-stop errors, just log them
         }
       }
       stopRobot()
@@ -339,15 +343,20 @@ export default function RobotTrading({ mode, assetClass, environment = 'demo' }:
           onClick={async () => {
             setLoading(true)
             try {
+              // ALWAYS use 'live' environment for Futures trading
+              const env = 'live' as 'demo' | 'live'
+              
+              console.log(`🔄 Robot toggle: current enabled=${config.enabled}, using environment=${env}`)
+              
               if (config.enabled) {
                 // STOP robot
-                const result = await robotApi.stop(environment)
+                const result = await robotApi.stop(env)
                 if (result.success) {
                   // Immediately update state for instant UI feedback
                   setConfigState(prev => ({ ...prev, enabled: false }))
                   // Reload config from backend to ensure sync
                   await loadConfigFromBackend()
-                  console.log(`✅ Robot stopped (${environment} mode)`)
+                  console.log(`✅ Robot stopped (${env} mode)`)
                 } else {
                   console.error('Failed to stop robot:', result.message)
                   // Reload config anyway to sync with backend state
@@ -355,13 +364,14 @@ export default function RobotTrading({ mode, assetClass, environment = 'demo' }:
                 }
               } else {
                 // START robot
-                const result = await robotApi.start(environment)
+                console.log(`🚀 Starting robot with environment: ${env}`)
+                const result = await robotApi.start(env)
                 if (result.success) {
                   // Immediately update state for instant UI feedback
                   setConfigState(prev => ({ ...prev, enabled: true }))
                   // Reload config from backend to ensure sync
                   await loadConfigFromBackend()
-                  console.log(`✅ Robot started (${environment} mode)`)
+                  console.log(`✅ Robot started (${env} mode)`)
                 } else {
                   console.error('Failed to start robot:', result.message)
                   // Reload config anyway to sync with backend state
@@ -369,7 +379,10 @@ export default function RobotTrading({ mode, assetClass, environment = 'demo' }:
                 }
               }
             } catch (error) {
-              console.error('Failed to toggle robot:', error)
+              const errorMessage = error instanceof Error ? error.message : 'Failed to toggle robot'
+              console.error('Failed to toggle robot:', errorMessage)
+              // Show error to user
+              alert(`Error: ${errorMessage}`)
               // Reload config on error to sync with backend state
               await loadConfigFromBackend()
             } finally {

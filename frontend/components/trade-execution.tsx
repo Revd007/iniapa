@@ -10,7 +10,7 @@ interface TradeExecutionProps {
   environment?: 'demo' | 'live'
 }
 
-export default function TradeExecution({ mode, assetClass, symbol, environment = 'demo' }: TradeExecutionProps) {
+export default function TradeExecution({ mode, assetClass, symbol, environment = 'live' }: TradeExecutionProps) {
   const [tradeType, setTradeType] = useState<'buy' | 'sell'>('buy')
   const [quantity, setQuantity] = useState('0.01')
   const [entryPrice, setEntryPrice] = useState('')
