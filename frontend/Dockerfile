@@ -1,6 +1,10 @@
 # Frontend Dockerfile - Next.js
 FROM node:20-alpine AS base
 
+# Declare build arg to control build-time NODE_ENV (default to 'development')
+ARG NODE_ENV=development
+ENV NODE_ENV=${NODE_ENV}
+
 # Install dependencies only when needed
 FROM base AS deps
 RUN apk add --no-cache libc6-compat
@@ -9,12 +13,12 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# If package-lock.json exists, use npm ci; otherwise use npm install.
-# Also make sure devDependencies are installed during build:
+# Ensure devDependencies are installed during build by using NODE_ENV=development for deps stage.
+# If package-lock.json exists -> npm ci; otherwise fallback to npm install
 RUN if [ -f package-lock.json ]; then \
-      npm ci --silent --include=dev ; \
+      npm ci --silent; \
     else \
-      npm install --silent ; \
+      npm install --silent; \
     fi
 
 # Rebuild the source code only when needed
@@ -23,7 +27,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Set environment variables for build
+# Set environment variables for build (production build)
 ENV NEXT_TELEMETRY_DISABLED 1
 ENV NODE_ENV production
 
@@ -42,7 +46,7 @@ RUN adduser --system --uid 1001 nextjs
 
 # Copy necessary files from standalone build
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./ 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs

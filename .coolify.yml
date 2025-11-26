@@ -7,14 +7,14 @@ version: '1.0'
 application:
   name: tradanalisa
   type: docker-compose
-  
+
 # Build configuration
 build:
   compose_files:
     - docker-compose.yml
     - frontend/docker-compose.prod.yml
   context: .
-  
+
 # Port configuration
 ports:
   - 3000
