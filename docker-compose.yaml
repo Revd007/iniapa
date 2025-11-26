@@ -18,6 +18,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - NODE_ENV=development
     container_name: iniapa-frontend
     restart: always
     ports:

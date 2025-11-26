@@ -3,13 +3,19 @@ FROM node:20-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
-ENV NODE_ENV=development
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # Copy package files
 COPY package.json package-lock.json* ./
-RUN npm ci --silent
+
+# If package-lock.json exists, use npm ci; otherwise use npm install.
+# Also make sure devDependencies are installed during build:
+RUN if [ -f package-lock.json ]; then \
+      npm ci --silent --include=dev ; \
+    else \
+      npm install --silent ; \
+    fi
 
 # Rebuild the source code only when needed
 FROM base AS builder
