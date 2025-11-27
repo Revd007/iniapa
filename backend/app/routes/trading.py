@@ -12,6 +12,7 @@ import logging
 
 from app.database import get_db, Trade
 from app.config import settings
+from app.services.binance_service import BinanceService
 
 logger = logging.getLogger(__name__)
 
@@ -236,8 +237,11 @@ async def close_trade(
     request: Request,
     db: Session = Depends(get_db)
 ):
-    """Close an open trade manually (with Binance order cancellation if applicable)"""
+    """Close an open trade manually and close position on Binance Futures if live"""
     try:
+        from app.models import TradeMode, APICredential
+        from app.services.binance_service import BinanceService
+        
         # Get trade from database
         trade = db.query(Trade).filter(Trade.id == close_request.trade_id).first()
         
@@ -255,18 +259,87 @@ async def close_trade(
             ticker = await binance_service.get_ticker_price(trade.symbol)
             exit_price = float(ticker.get('price', 0))
         
-        # Cancel SL/TP orders on Binance if they exist (before closing)
-        if not settings.BINANCE_PAPER_TRADING and binance_service.api_key:
+        # Check if this is a LIVE trade that needs to be closed on Binance
+        if trade.execution_mode == TradeMode.LIVE and not settings.BINANCE_PAPER_TRADING:
+            logger.info(f"🔴 Closing LIVE position on Binance Futures for trade {trade.id}")
+            
+            # Get API credentials from database
+            api_creds = db.query(APICredential).filter_by(user_id=trade.user_id).first()
+            
+            if api_creds and api_creds.binance_api_key and api_creds.binance_api_secret:
+                try:
+                    # Decrypt API keys
+                    from cryptography.fernet import Fernet
+                    import base64
+                    import hashlib
+                    encryption_key = base64.urlsafe_b64encode(hashlib.sha256(b"nof1trading_secret_key").digest())
+                    cipher = Fernet(encryption_key)
+                    
+                    api_key = cipher.decrypt(api_creds.binance_api_key.encode()).decode()
+                    api_secret = cipher.decrypt(api_creds.binance_api_secret.encode()).decode()
+                    
+                    # Create BinanceService instance for live trading
+                    live_binance_service = BinanceService()
+                    live_binance_service.api_key = api_key
+                    live_binance_service.api_secret = api_secret
+                    live_binance_service.testnet = False  # Live mode
+                    live_binance_service.base_url = "https://api.binance.com/api"
+                    await live_binance_service.initialize()
+                    
+                    # Cancel SL/TP orders FIRST (Futures uses different endpoints)
+                    if trade.binance_sl_order_id or trade.binance_tp_order_id:
+                        try:
+                            if trade.binance_sl_order_id:
+                                # Cancel Futures order
+                                await live_binance_service.cancel_futures_order(trade.symbol, int(trade.binance_sl_order_id))
+                                logger.info(f"✅ Cancelled Futures SL order {trade.binance_sl_order_id}")
+                            if trade.binance_tp_order_id:
+                                await live_binance_service.cancel_futures_order(trade.symbol, int(trade.binance_tp_order_id))
+                                logger.info(f"✅ Cancelled Futures TP order {trade.binance_tp_order_id}")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Failed to cancel SL/TP orders: {e}")
+                    
+                    # Close position by placing REVERSE order (BUY -> SELL, SELL -> BUY)
+                    close_side = "SELL" if trade.side == "BUY" else "BUY"
+                    
+                    logger.info(f"📤 Executing Futures CLOSE order: {close_side} {trade.quantity} {trade.symbol} @ market")
+                    
+                    # Execute close order on Binance Futures
+                    close_order = await live_binance_service.create_futures_order(
+                        symbol=trade.symbol,
+                        side=close_side,
+                        order_type="MARKET",
+                        quantity=trade.quantity,
+                        position_side="BOTH"
+                    )
+                    
+                    # Extract executed price from response
+                    main_order = close_order.get('main_order', close_order)
+                    if 'avgPrice' in main_order:
+                        exit_price = float(main_order['avgPrice'])
+                    
+                    logger.info(f"✅ Position closed on Binance Futures: OrderID={main_order.get('orderId')}, Price=${exit_price}")
+                    
+                    # Close the BinanceService session
+                    await live_binance_service.close()
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to close position on Binance Futures: {e}")
+                    raise HTTPException(status_code=500, detail=f"Failed to close position on Binance: {str(e)}")
+            else:
+                logger.warning(f"⚠️ No API credentials found for user {trade.user_id} - cannot close position on Binance")
+        
+        # For DEMO trades or if Binance close succeeded, also cancel any remaining SL/TP
+        elif binance_service.api_key and (trade.sl_order_id or trade.tp_order_id):
             try:
                 if trade.sl_order_id:
                     await binance_service.cancel_order(trade.symbol, trade.sl_order_id)
-                    logger.info(f"Cancelled SL order {trade.sl_order_id} for trade {trade.id}")
+                    logger.info(f"Cancelled SL order {trade.sl_order_id} for demo trade {trade.id}")
                 if trade.tp_order_id:
                     await binance_service.cancel_order(trade.symbol, trade.tp_order_id)
-                    logger.info(f"Cancelled TP order {trade.tp_order_id} for trade {trade.id}")
+                    logger.info(f"Cancelled TP order {trade.tp_order_id} for demo trade {trade.id}")
             except Exception as e:
-                logger.warning(f"Failed to cancel SL/TP orders for trade {trade.id}: {e}")
-                # Continue anyway - we'll still close the trade
+                logger.warning(f"Failed to cancel demo SL/TP orders for trade {trade.id}: {e}")
         
         # Calculate profit/loss
         if trade.side == "BUY":
@@ -386,16 +459,73 @@ async def get_positions(
         positions = []
         auto_closed = []
         
+        # For LIVE trades, fetch ACTUAL position data from Binance Futures API
+        binance_positions = {}  # symbol -> position data from Binance
+        if env == "live" and execution_mode == TradeMode.LIVE:
+            try:
+                from app.models import APICredential
+                
+                api_creds = db.query(APICredential).filter_by(user_id=1).first()  # TODO: Get from auth context
+                
+                if api_creds and api_creds.binance_api_key and api_creds.binance_api_secret:
+                    # Decrypt API keys
+                    from cryptography.fernet import Fernet
+                    import base64
+                    import hashlib
+                    encryption_key = base64.urlsafe_b64encode(hashlib.sha256(b"nof1trading_secret_key").digest())
+                    cipher = Fernet(encryption_key)
+                    
+                    api_key = cipher.decrypt(api_creds.binance_api_key.encode()).decode()
+                    api_secret = cipher.decrypt(api_creds.binance_api_secret.encode()).decode()
+                    
+                    # Create BinanceService instance for live trading
+                    live_binance_service = BinanceService()
+                    live_binance_service.api_key = api_key
+                    live_binance_service.api_secret = api_secret
+                    live_binance_service.testnet = False
+                    live_binance_service.base_url = "https://api.binance.com/api"
+                    await live_binance_service.initialize()
+                    
+                    # Fetch actual positions from Binance Futures
+                    futures_account = await live_binance_service.get_futures_account_info()
+                    
+                    # Parse positions from Binance response
+                    for position in futures_account.get('positions', []):
+                        symbol = position.get('symbol')
+                        position_amt = float(position.get('positionAmt', 0))
+                        
+                        # Only include positions with non-zero amount
+                        if abs(position_amt) > 0:
+                            binance_positions[symbol] = {
+                                'positionAmt': position_amt,
+                                'entryPrice': float(position.get('entryPrice', 0)),
+                                'markPrice': float(position.get('markPrice', 0)),
+                                'unRealizedProfit': float(position.get('unRealizedProfit', 0)),
+                                'leverage': int(position.get('leverage', 1)),
+                                'marginType': position.get('marginType', 'CROSSED'),
+                                'isolatedMargin': float(position.get('isolatedMargin', 0)),
+                                'notional': float(position.get('notional', 0))
+                            }
+                            logger.info(f"📊 Binance position for {symbol}: Entry=${position.get('entryPrice')}, Mark=${position.get('markPrice')}, PNL=${position.get('unRealizedProfit')}")
+                    
+                    await live_binance_service.close()
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to fetch Binance positions: {e} - using database data")
+        
         # Batch fetch all unique symbols for mark prices (optimize API calls)
         unique_symbols = list(set(t.symbol for t in trades))
         mark_prices_cache = {}
         
         for symbol in unique_symbols:
-            try:
-                ticker = await binance_service.get_ticker_price(symbol)
-                mark_prices_cache[symbol] = float(ticker.get("price", 0))
-            except Exception:
-                mark_prices_cache[symbol] = None
+            # For LIVE trades, use Binance mark price if available
+            if symbol in binance_positions:
+                mark_prices_cache[symbol] = binance_positions[symbol]['markPrice']
+            else:
+                try:
+                    ticker = await binance_service.get_ticker_price(symbol)
+                    mark_prices_cache[symbol] = float(ticker.get("price", 0))
+                except Exception:
+                    mark_prices_cache[symbol] = None
         
         for t in trades:
             # Use cached mark price or fallback to entry price
@@ -483,21 +613,47 @@ async def get_positions(
                         db.rollback()
 
             # Continue to add position to list (if not auto-closed)
-            size = t.quantity
-            entry_price = t.entry_price
-            break_even_price = entry_price  # simplified
-
-            # Unrealized PnL
-            if t.side == "BUY":
-                pnl = (mark_price - entry_price) * size * (t.leverage or 1)
+            # For LIVE trades, use ACTUAL data from Binance if available
+            if t.symbol in binance_positions:
+                binance_pos = binance_positions[t.symbol]
+                
+                # Use ACTUAL entry price, mark price, and PNL from Binance
+                entry_price = binance_pos['entryPrice']
+                mark_price = binance_pos['markPrice']
+                pnl = binance_pos['unRealizedProfit']
+                size = abs(binance_pos['positionAmt'])
+                actual_leverage = binance_pos['leverage']
+                actual_margin = binance_pos['isolatedMargin'] if binance_pos['marginType'] == 'ISOLATED' else (binance_pos['notional'] / actual_leverage)
+                
+                # Update database with actual entry price from Binance (sync)
+                if abs(t.entry_price - entry_price) > 0.01:  # Only update if significantly different
+                    logger.info(f"🔄 Syncing entry price for {t.symbol}: DB={t.entry_price} -> Binance={entry_price}")
+                    t.entry_price = entry_price
+                    db.commit()
+                
+                # Calculate ROI based on actual margin used
+                roi_percent = (pnl / actual_margin * 100) if actual_margin > 0 else 0
+                margin_ratio = abs(pnl) / actual_margin * 100 if actual_margin > 0 else 0
+                
+                logger.info(f"✅ Using Binance data for {t.symbol}: Entry=${entry_price}, Mark=${mark_price}, PNL=${pnl:.2f}, ROI={roi_percent:.2f}%")
             else:
-                pnl = (entry_price - mark_price) * size * (t.leverage or 1)
+                # For DEMO trades or if Binance data not available, use database data
+                size = t.quantity
+                entry_price = t.entry_price
+                mark_price = mark_prices_cache.get(t.symbol) or t.entry_price
 
-            roi_percent = (pnl / t.total_value * 100) if t.total_value else 0
+                # Unrealized PnL
+                if t.side == "BUY":
+                    pnl = (mark_price - entry_price) * size * (t.leverage or 1)
+                else:
+                    pnl = (entry_price - mark_price) * size * (t.leverage or 1)
 
-            # Simple margin approximation
-            margin = t.total_value / (t.leverage or 1)
-            margin_ratio = abs(pnl) / margin * 100 if margin else 0
+                roi_percent = (pnl / t.total_value * 100) if t.total_value else 0
+
+                # Simple margin approximation
+                actual_margin = t.total_value / (t.leverage or 1)
+                margin_ratio = abs(pnl) / actual_margin * 100 if actual_margin > 0 else 0
+                actual_leverage = t.leverage or 1
 
             positions.append(
                 {
@@ -506,15 +662,15 @@ async def get_positions(
                     "side": t.side,
                     "size": size,
                     "entry_price": entry_price,
-                    "break_even_price": break_even_price,
+                    "break_even_price": entry_price,  # simplified
                     "mark_price": mark_price,
                     "liq_price": None,  # can be extended with real formula later
                     "margin_ratio": margin_ratio,
-                    "margin": margin,
+                    "margin": actual_margin,
                     "pnl": pnl,
                     "roi_percent": roi_percent,
                     "est_funding_fee": 0.0,
-                    "leverage": t.leverage,
+                    "leverage": actual_leverage,
                     "stop_loss": t.stop_loss,
                     "take_profit": t.take_profit,
                     "created_at": t.created_at.isoformat(),

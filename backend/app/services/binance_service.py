@@ -462,6 +462,109 @@ class BinanceService:
             logger.error(f"Failed to create order: {str(e)}")
             raise
     
+    async def set_futures_margin_type(
+        self,
+        symbol: str,
+        margin_type: str = "CROSS"  # CROSSED or ISOLATED
+    ) -> Dict:
+        """
+        Change margin type for a symbol (CROSS or ISOLATED)
+        Reference: https://binance-docs.github.io/apidocs/futures/en/#change-margin-type-trade
+        
+        Args:
+            symbol: Trading pair (e.g., "BTCUSDT")
+            margin_type: "CROSSED" or "ISOLATED" (default: "CROSSED")
+        """
+        if self.testnet:
+            futures_base_url = "https://testnet.binancefuture.com"
+        else:
+            futures_base_url = "https://fapi.binance.com"
+        
+        await self._wait_for_rate_limit(1)
+        
+        if not self.session:
+            await self.initialize()
+        
+        params = {
+            "symbol": symbol,
+            "marginType": margin_type,
+            "timestamp": int(time.time() * 1000)
+        }
+        params['signature'] = self._generate_signature(params)
+        
+        headers = {}
+        if self.api_key:
+            headers['X-MBX-APIKEY'] = self.api_key
+        
+        try:
+            url = f"{futures_base_url}/fapi/v1/marginType"
+            async with self.session.post(url, params=params, headers=headers, timeout=30) as response:
+                data = await response.json()
+                if response.status != 200:
+                    error_msg = data.get('msg', 'Unknown error')
+                    # Error code -4046 means margin type is already set (not a real error)
+                    if data.get('code') == -4046:
+                        logger.info(f"ℹ️ Margin type for {symbol} is already {margin_type}")
+                        return {"success": True, "message": "Already set"}
+                    logger.warning(f"Failed to set margin type for {symbol}: {error_msg}")
+                    return {"success": False, "message": error_msg}
+                
+                logger.info(f"✅ Margin type set to {margin_type} for {symbol}")
+                return data
+        except Exception as e:
+            logger.warning(f"Failed to set margin type: {e}")
+            return {"success": False, "message": str(e)}
+    
+    async def cancel_futures_order(
+        self,
+        symbol: str,
+        order_id: int
+    ) -> Dict:
+        """
+        Cancel a Futures order
+        Reference: https://binance-docs.github.io/apidocs/futures/en/#cancel-order-trade
+        
+        Args:
+            symbol: Trading pair (e.g., "BTCUSDT")
+            order_id: Order ID to cancel
+        """
+        if self.testnet:
+            futures_base_url = "https://testnet.binancefuture.com"
+        else:
+            futures_base_url = "https://fapi.binance.com"
+        
+        await self._wait_for_rate_limit(1)
+        
+        if not self.session:
+            await self.initialize()
+        
+        params = {
+            "symbol": symbol,
+            "orderId": order_id,
+            "timestamp": int(time.time() * 1000)
+        }
+        params['signature'] = self._generate_signature(params)
+        
+        headers = {}
+        if self.api_key:
+            headers['X-MBX-APIKEY'] = self.api_key
+        
+        try:
+            url = f"{futures_base_url}/fapi/v1/order"
+            async with self.session.delete(url, params=params, headers=headers, timeout=30) as response:
+                data = await response.json()
+                if response.status != 200:
+                    error_msg = data.get('msg', 'Unknown error')
+                    logger.warning(f"Failed to cancel Futures order {order_id} for {symbol}: {error_msg}")
+                    # Don't raise exception - order might already be filled/cancelled
+                    return {"success": False, "message": error_msg}
+                
+                logger.info(f"✅ Cancelled Futures order {order_id} for {symbol}")
+                return data
+        except Exception as e:
+            logger.warning(f"Failed to cancel Futures order {order_id}: {e}")
+            return {"success": False, "message": str(e)}
+    
     async def set_futures_leverage(
         self,
         symbol: str,
@@ -469,11 +572,18 @@ class BinanceService:
     ) -> Dict:
         """
         Change initial leverage for a symbol
-        Reference: https://binance-docs.github.io/apidocs/futures/en/#change-initial-leverage-trade
+        Reference: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Change-Initial-Leverage
         
         Args:
             symbol: Trading pair (e.g., "BTCUSDT")
             leverage: Leverage value (1-125)
+            
+        Returns:
+            {
+                "leverage": 50,
+                "maxNotionalValue": "1000000",
+                "symbol": "BTCUSDT"
+            }
         """
         if self.testnet:
             futures_base_url = "https://testnet.binancefuture.com"
@@ -498,17 +608,31 @@ class BinanceService:
         
         try:
             url = f"{futures_base_url}/fapi/v1/leverage"
+            logger.info(f"🔧 Setting leverage for {symbol} to {leverage}x...")
+            
             async with self.session.post(url, params=params, headers=headers, timeout=30) as response:
                 data = await response.json()
                 if response.status != 200:
                     error_msg = data.get('msg', 'Unknown error')
-                    logger.error(f"Failed to set leverage for {symbol}: {error_msg}")
+                    error_code = data.get('code', 'N/A')
+                    logger.error(f"❌ Failed to set leverage for {symbol}: [{error_code}] {error_msg}")
                     raise Exception(f"Set leverage error: {error_msg}")
                 
-                logger.info(f"✅ Leverage set to {leverage}x for {symbol}")
+                # LOG RESPONSE FROM BINANCE to verify leverage is ACTUALLY set
+                actual_leverage = data.get('leverage', 'unknown')
+                max_notional = data.get('maxNotionalValue', 'unknown')
+                
+                logger.info(f"✅ LEVERAGE CONFIRMED BY BINANCE:")
+                logger.info(f"   Symbol: {symbol}")
+                logger.info(f"   Leverage: {actual_leverage}x (requested: {leverage}x)")
+                logger.info(f"   Max Notional Value: ${max_notional}")
+                
+                if int(actual_leverage) != leverage:
+                    logger.warning(f"⚠️ WARNING: Binance set leverage to {actual_leverage}x instead of requested {leverage}x!")
+                
                 return data
         except Exception as e:
-            logger.error(f"Failed to set leverage: {e}")
+            logger.error(f"❌ Failed to set leverage: {e}")
             raise
     
     async def create_futures_order(
@@ -538,10 +662,15 @@ class BinanceService:
             position_side: "BOTH", "LONG", or "SHORT" (default: "BOTH")
             leverage: Leverage value (1-125, optional - will be set before order)
         """
-        # Set leverage first if specified
+        # Set margin type to CROSSED and leverage first if specified
         if leverage:
             try:
+                # IMPORTANT: Set margin type to CROSSED first (allows higher leverage)
+                await self.set_futures_margin_type(symbol, "CROSSED")
+                
+                # Then set leverage
                 await self.set_futures_leverage(symbol, leverage)
+                logger.info(f"✅ Set {symbol} to CROSS margin with {leverage}x leverage")
             except Exception as e:
                 logger.warning(f"Failed to set leverage to {leverage}x: {e} - continuing with current leverage")
         if self.testnet:

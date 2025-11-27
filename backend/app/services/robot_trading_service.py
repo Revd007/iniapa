@@ -176,7 +176,8 @@ class RobotTradingService:
     
     async def manual_scan(self, user_id: int):
         """
-        Manual scan - allows scanning even if robot is disabled (for testing/debugging)
+        Manual scan - ONLY executes trades if robot is enabled
+        If robot is disabled, it will NOT execute trades (safety check)
         """
         logger.info(f"🔍 Manual scan triggered for user {user_id}...")
         
@@ -186,21 +187,20 @@ class RobotTradingService:
                 logger.error(f"❌ Robot config not found for user {user_id}")
                 raise ValueError(f"Robot config not found for user {user_id}")
             
-            # Temporarily enable if disabled (only for this scan)
-            original_enabled = config.enabled
+            # CRITICAL: Check if robot is enabled - DO NOT execute trades if disabled!
             if not config.enabled:
-                logger.info(f"⚠️ Robot is disabled, temporarily enabling for manual scan...")
-                config.enabled = True
-                db.commit()
-                db.refresh(config)
+                logger.warning(f"🛑 Robot is DISABLED - manual scan will NOT execute trades!")
+                logger.warning(f"   To execute trades, please enable the robot first.")
+                return {
+                    "success": True,
+                    "message": "Manual scan completed (robot is disabled, no trades executed)",
+                    "enabled": False,
+                    "trades_executed": 0
+                }
             
-            try:
-                await self._scan_and_trade_internal(user_id, db, config)
-            finally:
-                # Restore original enabled state
-                if not original_enabled:
-                    config.enabled = False
-                    db.commit()
+            # Only execute trades if robot is enabled
+            logger.info(f"✅ Robot is enabled, proceeding with manual scan and trade execution...")
+            await self._scan_and_trade_internal(user_id, db, config)
     
     async def _scan_and_trade(self, user_id: int):
         """Scan market, get AI recommendations, execute trades (only if enabled)"""
