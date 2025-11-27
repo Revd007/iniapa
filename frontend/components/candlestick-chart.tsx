@@ -26,7 +26,7 @@ interface CandlestickChartProps {
 export default function CandlestickChart({ data }: CandlestickChartProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const animationFrameRef = useRef<number>()
+  const animationFrameRef = useRef<number | null>(null)
   
   // Chart interaction state
   const [offset, setOffset] = useState(0)
@@ -79,7 +79,7 @@ export default function CandlestickChart({ data }: CandlestickChartProps) {
     return () => {
       clearTimeout(resizeTimeout)
       window.removeEventListener('resize', handleResize)
-      if (animationFrameRef.current) {
+      if (animationFrameRef.current !== null) {
         cancelAnimationFrame(animationFrameRef.current)
       }
     }

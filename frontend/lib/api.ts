@@ -63,26 +63,28 @@ export interface ChartData {
   macd_histogram?: number;
 }
 
-export interface Trade {
-  id: number;
-  symbol: string;
-  side: string;
-  quantity: number;
-  price: number;
-  total_value: number;
-  leverage: number;
-  status: string;
-  entry_price: number;
-  exit_price?: number;
-  profit_loss?: number;
-  profit_loss_percent?: number;
-  is_win?: boolean;
-  created_at: string;
-  closed_at?: string;
-  trading_mode?: string;  // scalper, normal, aggressive, longhold
-  ai_confidence?: number;  // If present, trade was executed by robot
-  ai_reason?: string;
-  ai_model?: string;
+export type Trade = {
+  id: string
+  symbol: string
+  entry_price: number
+  // Use null instead of undefined to match frontend code expectations
+  exit_price: number | null
+  entry_time: string
+  exit_time?: string | null
+  quantity: number
+  price: number
+  total_value: number
+  leverage: number
+  status: string
+  profit_loss?: number
+  profit_loss_percent?: number
+  is_win?: boolean
+  created_at: string
+  closed_at?: string
+  trading_mode?: string  // scalper, normal, aggressive, longhold
+  ai_confidence?: number  // If present, trade was executed by robot
+  ai_reason?: string
+  ai_model?: string
 }
 
 export interface PerformanceMetrics {

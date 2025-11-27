@@ -6,20 +6,23 @@ version: '1.0'
 # Application configuration
 application:
   name: tradanalisa
-  type: dockerfile
-  
+  type: docker-compose
+
 # Build configuration
 build:
-  dockerfile: Dockerfile
+  compose_files:
+    - docker-compose.yml
+    - frontend/docker-compose.prod.yml
   context: .
-  
+
 # Port configuration
 ports:
   - 3000
 
 # Health check
 healthcheck:
-  path: /
+  service: backend
+  path: /health
   interval: 30
   timeout: 10
   retries: 3
@@ -27,5 +30,8 @@ healthcheck:
 # Environment variables (set these in Coolify dashboard)
 environment:
   - NEXT_PUBLIC_API_URL
-  - NODE_ENV=production
-
+  - DATABASE_URL
+  - JWT_SECRET_KEY
+  - BINANCE_API_KEY
+  - BINANCE_API_SECRET
+  - OPENROUTER_API_KEY
