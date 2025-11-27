@@ -1,7 +1,7 @@
 # Frontend Dockerfile - Next.js
 FROM node:20-alpine AS base
 
-# Declare build arg to control build-time NODE_ENV (default to 'development')
+# Declare build arg to control build-time NODE_ENV
 ARG NODE_ENV=development
 ENV NODE_ENV=${NODE_ENV}
 
@@ -13,12 +13,11 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# Ensure devDependencies are installed during build by using NODE_ENV=development for deps stage.
-# If package-lock.json exists -> npm ci; otherwise fallback to npm install
+# Install dependencies
 RUN if [ -f package-lock.json ]; then \
-      npm ci --silent; \
+      npm ci; \
     else \
-      npm install --silent; \
+      npm install; \
     fi
 
 # Rebuild the source code only when needed
@@ -27,11 +26,16 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Set environment variables for build (production build)
+# --- FIX START: Tangkap variable dari docker-compose disini ---
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# -------------------------------------------------------------
+
 ENV NEXT_TELEMETRY_DISABLED 1
 ENV NODE_ENV production
 
 # Build Next.js
+# Pastikan next.config.js sudah diset ignore eslint/ts errors
 RUN npm run build
 
 # Production image, copy all the files and run next
@@ -46,6 +50,7 @@ RUN adduser --system --uid 1001 nextjs
 
 # Copy necessary files from standalone build
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+# NOTE: Pastikan next.config.js memiliki output: 'standalone'
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./ 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
@@ -57,4 +62,3 @@ ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
 
 CMD ["node", "server.js"]
-
