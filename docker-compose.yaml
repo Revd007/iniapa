@@ -10,6 +10,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      # Variable ini diambil dari Coolify Dashboard
       DATABASE_URL: ${DATABASE_URL}
       NODE_ENV: production
     depends_on:
@@ -20,7 +21,10 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - NODE_ENV=development
+        # Gunakan production agar optimasi maksimal
+        - NODE_ENV=production
+        # INI PENTING: Mengirim URL backend ke proses build frontend
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
     container_name: iniapa-frontend
     restart: always
     ports:
