@@ -62,7 +62,7 @@ export default function Header({ assetClass, onEnvironmentChange }: HeaderProps)
     const loadInitialEnv = async () => {
       try {
         // Try to get environment from settings API
-        const response = await fetch('http://localhost:8000/api/settings/current')
+        const response = await fetch('http://localhost:8743/api/settings/current')
         const data = await response.json()
         if (data.success && data.has_custom_keys) {
           const savedEnv = data.environment || 'demo'

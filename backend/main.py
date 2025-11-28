@@ -158,7 +158,10 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5237",
         "http://127.0.0.1:5237",
-        "http://http://103.190.28.210/:5237"
+        "http://localhost:3000",  # Keep old port for compatibility
+        "http://127.0.0.1:3000",  # Keep old port for compatibility
+        "http://100.85.124.82:5237",  # Network IP
+        "http://100.85.124.82:3000",  # Network IP old port
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -212,7 +215,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="localhost",
-        port=8000,
+        port=8743,
         reload=True,
         log_level="info",
         # Optimize for faster startup

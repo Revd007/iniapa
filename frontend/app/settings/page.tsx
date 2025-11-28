@@ -109,7 +109,7 @@ export default function SettingsPage() {
   const fetchWithdrawalHistory = async () => {
     setLoadingWithdrawalHistory(true)
     try {
-      const response = await fetch(`http://localhost:8000/api/account/withdrawal-history?env=${environment}&limit=50`)
+      const response = await fetch(`http://localhost:8743/api/account/withdrawal-history?env=${environment}&limit=50`)
       const data = await response.json()
       if (data.success) {
         setWithdrawalHistory(data.withdrawals || [])
@@ -123,7 +123,7 @@ export default function SettingsPage() {
 
   const fetchAccountInfo = async () => {
     try {
-      const response = await fetch(`http://localhost:8000/api/settings/account-info?env=${environment}`)
+      const response = await fetch(`http://localhost:8743/api/settings/account-info?env=${environment}`)
       const data = await response.json()
       setAccountInfo(data)
     } catch (error) {
@@ -133,7 +133,7 @@ export default function SettingsPage() {
 
   const fetchCurrentSettings = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/settings/current')
+      const response = await fetch('http://localhost:8743/api/settings/current')
       const data = await response.json()
       if (data.success) {
         // Set API keys from database
@@ -153,7 +153,7 @@ export default function SettingsPage() {
     setMessage(null)
     
     try {
-      const response = await fetch('http://localhost:8000/api/settings/api-keys', {
+      const response = await fetch('http://localhost:8743/api/settings/api-keys', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -186,7 +186,7 @@ export default function SettingsPage() {
     setLoadingMaxWithdraw(true)
     try {
       const response = await fetch(
-        `http://localhost:8000/api/account/max-withdraw?asset=${withdrawAsset}&env=${environment}`
+        `http://localhost:8743/api/account/max-withdraw?asset=${withdrawAsset}&env=${environment}`
       )
       const data = await response.json()
       
@@ -232,7 +232,7 @@ export default function SettingsPage() {
     setMessage(null)
 
     try {
-      const response = await fetch(`http://localhost:8000/api/account/withdraw?env=${environment}`, {
+      const response = await fetch(`http://localhost:8743/api/account/withdraw?env=${environment}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

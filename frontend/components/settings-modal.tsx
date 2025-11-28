@@ -63,7 +63,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
   const fetchAccountInfo = async () => {
     try {
-      const response = await fetch(`http://localhost:8000/api/settings/account-info?env=${environment}`)
+      const response = await fetch(`http://localhost:8743/api/settings/account-info?env=${environment}`)
       const data = await response.json()
       setAccountInfo(data)
     } catch (error) {
@@ -73,7 +73,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
   const fetchCurrentSettings = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/settings/current')
+      const response = await fetch('http://localhost:8743/api/settings/current')
       const data = await response.json()
       if (data.success && data.has_custom_keys) {
         setEnvironment(data.environment as 'demo' | 'live')
@@ -93,7 +93,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     setMessage(null)
 
     try {
-      const response = await fetch('http://localhost:8000/api/settings/api-keys', {
+      const response = await fetch('http://localhost:8743/api/settings/api-keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -133,7 +133,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     setMessage(null)
 
     try {
-      const response = await fetch('http://localhost:8000/api/settings/api-keys', {
+      const response = await fetch('http://localhost:8743/api/settings/api-keys', {
         method: 'DELETE'
       })
 
