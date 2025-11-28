@@ -3,7 +3,7 @@
  * Handles all communication with the Python FastAPI backend
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8743';
 
 // Available crypto symbols for market overview and trading
 export const CRYPTO_SYMBOLS = [
