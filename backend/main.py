@@ -162,6 +162,8 @@ app.add_middleware(
         "http://127.0.0.1:3000",  # Keep old port for compatibility
         "http://100.85.124.82:5237",  # Network IP
         "http://100.85.124.82:3000",  # Network IP old port
+        "https://tradanalisa.dutatravel.net",  # Production domain
+        "https://www.tradanalisa.dutatravel.net",  # Production domain with www
     ],
     allow_credentials=True,
     allow_methods=["*"],

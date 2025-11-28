@@ -16,9 +16,14 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Set environment variables for build
+# Accept build arguments for environment variables
+ARG NEXT_PUBLIC_API_URL
+ARG NODE_ENV=production
+
+# Set environment variables for build (NEXT_PUBLIC_* must be set at build time)
 ENV NEXT_TELEMETRY_DISABLED 1
-ENV NODE_ENV production
+ENV NODE_ENV=${NODE_ENV}
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
 # Build Next.js
 RUN npm run build
