@@ -239,34 +239,41 @@ class RobotTradingService:
                 logger.info(f"⏸️ Trade cooldown active: {config.trade_cooldown_seconds - elapsed:.1f}s remaining")
                 return
         
-        # Safety check: max positions
-        open_trades = db.query(Trade).filter_by(
-            user_id=user_id,
-            status=TradeStatus.OPEN
+        # Determine execution_mode based on config.environment
+        from app.models import TradeMode
+        environment = config.environment or "demo"
+        execution_mode = TradeMode.LIVE if environment == "live" else TradeMode.DEMO
+        
+        # Safety check: max positions (filter by execution_mode to match current environment)
+        open_trades = db.query(Trade).filter(
+            Trade.user_id == user_id,
+            Trade.status == TradeStatus.OPEN,
+            Trade.execution_mode == execution_mode
         ).all()
         
         open_trades_count = len(open_trades)
         if open_trades_count >= config.max_positions:
-            logger.info(f"⏸️ Max positions reached: {open_trades_count}/{config.max_positions} - waiting for positions to close")
+            logger.info(f"⏸️ Max positions reached: {open_trades_count}/{config.max_positions} ({environment} mode) - waiting for positions to close")
             return
         
         # Get list of symbols that already have open positions (avoid duplicate positions)
         open_symbols = {t.symbol for t in open_trades}
-        logger.info(f"📊 Current open positions: {open_trades_count} - Symbols: {', '.join(open_symbols) if open_symbols else 'None'}")
+        logger.info(f"📊 Current open positions ({environment}): {open_trades_count}/{config.max_positions} - Symbols: {', '.join(open_symbols) if open_symbols else 'None'}")
         
-        # Safety check: max daily loss
+        # Safety check: max daily loss (filter by execution_mode)
         # today_start must be timezone-aware to compare with Trade.created_at (which is timezone-aware)
         now_utc = datetime.now(timezone.utc)
         today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
         today_trades = db.query(Trade).filter(
             Trade.user_id == user_id,
             Trade.created_at >= today_start,
-            Trade.status == TradeStatus.CLOSED
+            Trade.status == TradeStatus.CLOSED,
+            Trade.execution_mode == execution_mode
         ).all()
         
         daily_pnl = sum(t.profit_loss or 0 for t in today_trades)
         if daily_pnl < -config.max_daily_loss:
-            logger.warning(f"⚠️ Max daily loss reached: ${daily_pnl:.2f} / ${-config.max_daily_loss:.2f} - Robot paused")
+            logger.warning(f"⚠️ Max daily loss reached ({environment}): ${daily_pnl:.2f} / ${-config.max_daily_loss:.2f} - Robot paused")
             return
         
         # Get AI recommendations
@@ -332,21 +339,54 @@ class RobotTradingService:
             logger.warning("⚠️ No actionable signals available after all filtering")
             return
         
-        # Take best recommendation (highest confidence)
-        best = sorted(actionable, key=lambda x: x.get('confidence', 0), reverse=True)[0]
+        # Sort by confidence (highest first) for priority
+        actionable_sorted = sorted(actionable, key=lambda x: x.get('confidence', 0), reverse=True)
         
-        # Final check: Make sure we don't already have this symbol
-        best_symbol_normalized = best.get('symbol', '').replace('/USDT', '').replace('/USD', '').upper() + 'USDT'
-        if best_symbol_normalized in open_symbols:
-            logger.warning(f"⚠️ Best recommendation {best.get('symbol')} already has open position - skipping")
+        # Calculate how many trades we can execute (respect max_positions limit)
+        slots_available = config.max_positions - open_trades_count
+        trades_to_execute = min(slots_available, len(actionable_sorted))
+        
+        if trades_to_execute <= 0:
+            logger.info(f"⏸️ No available slots for new trades: {open_trades_count}/{config.max_positions} positions open")
             return
         
-        logger.info(f"🎯 SELECTED: {best['symbol']} {best['signal']} ({best['confidence']}%)")
-        logger.info(f"   Entry: {best.get('entry_price', 'N/A')}, Target: {best.get('target_price', 'N/A')}, Stop: {best.get('stop_loss', 'N/A')}")
-        logger.info(f"   ✅ No duplicate position - proceeding with trade")
+        logger.info(f"🎯 Executing {trades_to_execute} trade(s) (slots available: {slots_available}/{config.max_positions})")
         
-        # Execute trade
-        await self._execute_trade(config, best, db)
+        # Execute multiple trades (up to slots_available)
+        executed_count = 0
+        for i, rec in enumerate(actionable_sorted[:trades_to_execute]):
+            symbol = rec.get('symbol', '')
+            signal = rec.get('signal', '')
+            confidence = rec.get('confidence', 0)
+            
+            # Double-check symbol not already in open positions (safety check)
+            symbol_normalized = symbol.replace('/USDT', '').replace('/USD', '').upper() + 'USDT'
+            if symbol_normalized in open_symbols:
+                logger.warning(f"   ⏭️ Skipping {symbol}: Already have open position (duplicate check)")
+                continue
+            
+            logger.info(f"🚀 [{i+1}/{trades_to_execute}] Executing: {symbol} {signal} ({confidence}%)")
+            logger.info(f"   Entry: {rec.get('entry_price', 'N/A')}, Target: {rec.get('target_price', 'N/A')}, Stop: {rec.get('stop_loss', 'N/A')}")
+            
+            try:
+                await self._execute_trade(config, rec, db)
+                executed_count += 1
+                
+                # Add to open_symbols to prevent duplicate in same batch
+                open_symbols.add(symbol_normalized)
+                
+                # Update open_trades_count for next iteration
+                open_trades_count += 1
+                
+                # Small delay between executions to avoid rate limits (0.5s)
+                if i < trades_to_execute - 1:  # Don't delay after last trade
+                    await asyncio.sleep(0.5)
+                    
+            except Exception as e:
+                logger.error(f"❌ Failed to execute trade {i+1}/{trades_to_execute} ({symbol}): {e}", exc_info=True)
+                # Continue with next trade even if this one fails
+        
+        logger.info(f"✅ Executed {executed_count}/{trades_to_execute} trade(s) successfully")
     
     async def _get_ai_recommendations(self, config: RobotConfig, db: Session) -> List[Dict[str, Any]]:
         """Get AI recommendations from AI service"""
@@ -567,10 +607,35 @@ class RobotTradingService:
                         logger.warning(f"⚠️ Invalid TP for SELL: ${take_profit:.2f} >= ${entry_price:.2f} - ignoring TP")
                         take_profit = None
             
+            # Validate leverage vs confidence before executing
+            confidence = recommendation.get('confidence', 0)
+            leverage = config.leverage
+            
+            # Leverage validation rules:
+            # - Leverage > 50x requires confidence > 80%
+            # - Leverage > 100x requires confidence > 90%
+            if leverage > 100:
+                if confidence < 90:
+                    logger.warning(
+                        f"❌ REJECTED: Leverage {leverage}x requires confidence ≥90%, "
+                        f"but recommendation has {confidence}% - aborting trade"
+                    )
+                    return
+                else:
+                    logger.info(f"✅ High leverage {leverage}x approved: Confidence {confidence}% ≥ 90%")
+            elif leverage > 50:
+                if confidence < 80:
+                    logger.warning(
+                        f"❌ REJECTED: Leverage {leverage}x requires confidence ≥80%, "
+                        f"but recommendation has {confidence}% - aborting trade"
+                    )
+                    return
+                else:
+                    logger.info(f"✅ Medium-high leverage {leverage}x approved: Confidence {confidence}% ≥ 80%")
+            
             # Calculate quantity based on capital_per_trade
             # With leverage: quantity = (capital * leverage) / entry_price
             capital = config.capital_per_trade
-            leverage = config.leverage
             raw_quantity = (capital * leverage) / entry_price
             
             # Round quantity to match Binance Futures precision requirements

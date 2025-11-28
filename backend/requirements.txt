@@ -1,42 +1,45 @@
-# NOF1 Trading Bot - Python Backend Requirements
+# Tradanalisa Trading Bot - Python Backend Requirements
 
 # Web Framework
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-multipart==0.0.6
+fastapi
+uvicorn[standard]
+python-multipart
 
 # HTTP Client
-aiohttp==3.9.1
-requests==2.31.0
+aiohttp
+requests
 
 # Database
-sqlalchemy==2.0.25
-alembic==1.13.1
+sqlalchemy
+alembic
+psycopg2
+
 
 # Environment Variables
-python-dotenv==1.0.0
+python-dotenv
 
 # Data Processing
-pandas==2.2.0
-numpy==1.26.3
+pandas
+numpy
 
 # Crypto/Trading
-python-binance==1.0.19
+python-binance
 
 # Validation
-pydantic==2.5.3
-pydantic-settings==2.1.0
+pydantic
+pydantic-settings
 
 # Security
-cryptography==42.0.0
-python-jose[cryptography]==3.3.0
+cryptography
+itsdangerous
+python-jose[cryptography]
 
 # Utilities
-python-dateutil==2.8.2
+python-dateutil
 
 # WebSocket Support
-websockets==12.0
+websockets
 
 # Logging
-loguru==0.7.2
+loguru
 

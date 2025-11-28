@@ -1,26 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { tradingApi } from '@/lib/api'
-
-interface Trade {
-  id: number
-  symbol: string
-  side: string
-  quantity: number
-  entry_price: number
-  exit_price: number | null
-  profit_loss: number | null
-  profit_loss_percent: number | null
-  is_win: boolean | null
-  status: string
-  leverage: number
-  trading_mode?: string
-  ai_confidence?: number
-  ai_reason?: string
-  created_at: string
-  closed_at: string | null
-}
+import { tradingApi, Trade } from '@/lib/api'
 
 interface TradeHistoryProps {
   environment?: 'demo' | 'live'
@@ -129,15 +110,15 @@ export default function TradeHistory({ environment = 'live' }: TradeHistoryProps
                 </td>
                 <td className="py-1 pr-2 text-right">${trade.entry_price.toFixed(2)}</td>
                 <td className="py-1 pr-2 text-right">
-                  {trade.exit_price ? `$${trade.exit_price.toFixed(2)}` : '-'}
+                  {trade.exit_price !== null ? `$${trade.exit_price.toFixed(2)}` : '-'}
                 </td>
                 <td className="py-1 pr-2 text-right">{trade.quantity}</td>
                 <td className="py-1 pr-2 text-right">{trade.leverage}x</td>
                 <td className="py-1 pr-2 text-right">
-                  {trade.profit_loss !== null ? (
+                  {trade.profit_loss !== null && trade.profit_loss !== undefined ? (
                     <span className={trade.profit_loss >= 0 ? 'text-green-400' : 'text-red-400'}>
                       ${trade.profit_loss.toFixed(2)}
-                      {trade.profit_loss_percent !== null && (
+                      {trade.profit_loss_percent !== null && trade.profit_loss_percent !== undefined && (
                         <span className="text-[9px] ml-1">
                           ({trade.profit_loss_percent >= 0 ? '+' : ''}{trade.profit_loss_percent.toFixed(2)}%)
                         </span>

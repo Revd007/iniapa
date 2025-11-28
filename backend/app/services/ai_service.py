@@ -24,9 +24,15 @@ class AIRecommendationService:
         # AI model (Qwen only, DeepSeek deprecated)
         self.model_qwen = settings.OPENROUTER_MODEL_QWEN
         
+        # AgentRouter Fallback Configuration
+        self.agentrouter_api_key = settings.AGENTROUTER_API_KEY
+        self.agentrouter_base_url = settings.AGENTROUTER_BASE_URL
+        self.agentrouter_model = settings.AGENTROUTER_MODEL
+        
         # Circuit breaker: track consecutive failures
         self.circuit_breaker_state = {
-            'qwen': {'failures': 0, 'last_failure': None}
+            'qwen': {'failures': 0, 'last_failure': None},
+            'agentrouter': {'failures': 0, 'last_failure': None}
         }
         self.circuit_breaker_threshold = 3  # After 3 failures, wait before retrying
         self.circuit_breaker_cooldown = 300  # 5 minutes cooldown
@@ -37,6 +43,17 @@ class AIRecommendationService:
             logger.info(f"AI Model: Qwen={self.model_qwen}")
         else:
             logger.warning("OpenRouter API key not configured - AI recommendations will use fallback data")
+        
+        # Log AgentRouter fallback status
+        if self.agentrouter_api_key:
+            logger.info(f"✅ AgentRouter fallback configured and ready!")
+            logger.info(f"   API Key: {self.agentrouter_api_key[:10]}... (length: {len(self.agentrouter_api_key)})")
+            logger.info(f"   Base URL: {self.agentrouter_base_url}")
+            logger.info(f"   Model: {self.agentrouter_model}")
+            logger.info(f"   → Will be used automatically when OpenRouter fails")
+        else:
+            logger.warning("⚠️ AgentRouter API key not configured - fallback will not be available")
+            logger.info("   → Set OPENAI_API_KEY (or AGENTROUTER_API_KEY) environment variable to enable fallback")
         
     async def generate_recommendations(
         self,
@@ -382,10 +399,32 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
                                 f"HTTP {response.status} - {response_text[:500]}"
                             )
                             
-                            # If 4xx error (client error), don't retry
+                            # If 4xx error (client error), check if we should try AgentRouter fallback
                             if 400 <= response.status < 500:
                                 breaker_state['failures'] += 1
                                 breaker_state['last_failure'] = time.time()
+                                
+                                # Check if this is a token/auth error (401, 403) or rate limit (429)
+                                # These errors suggest OpenRouter token habis or quota exceeded
+                                should_try_fallback = (
+                                    response.status in [401, 403, 429] and 
+                                    self.agentrouter_api_key and 
+                                    attempt == max_retries - 1  # Only try fallback on last attempt
+                                )
+                                
+                                if should_try_fallback:
+                                    logger.warning(
+                                        f"OpenRouter returned {response.status} (token habis/quota exceeded), "
+                                        f"attempting AgentRouter fallback..."
+                                    )
+                                    # Try AgentRouter fallback
+                                    fallback_result = await self._call_agentrouter(prompt, mode)
+                                    if fallback_result:
+                                        logger.info("✅ AgentRouter fallback successful!")
+                                        return fallback_result
+                                    else:
+                                        logger.warning("AgentRouter fallback also failed, using empty result")
+                                
                                 return []
                             
                             # For 5xx or other errors, retry
@@ -550,9 +589,247 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
                 else:
                     breaker_state['failures'] += 1
                     breaker_state['last_failure'] = time.time()
+                    # Try AgentRouter fallback on last attempt
+                    if self.agentrouter_api_key:
+                        logger.warning("OpenRouter failed after all retries, attempting AgentRouter fallback...")
+                        fallback_result = await self._call_agentrouter(prompt, mode)
+                        if fallback_result:
+                            logger.info("✅ AgentRouter fallback successful after OpenRouter failure!")
+                            return fallback_result
                     return []
         
-        # Should never reach here, but just in case
+        # Should never reach here, but just in case - try fallback before giving up
+        breaker_state['failures'] += 1
+        breaker_state['last_failure'] = time.time()
+        if self.agentrouter_api_key:
+            logger.warning("OpenRouter failed completely, attempting AgentRouter fallback as last resort...")
+            fallback_result = await self._call_agentrouter(prompt, mode)
+            if fallback_result:
+                logger.info("✅ AgentRouter fallback successful!")
+                return fallback_result
+        return []
+    
+    async def _call_agentrouter(self, prompt: str, mode: str) -> List[Dict]:
+        """
+        Call AgentRouter API as fallback when OpenRouter fails (token habis, etc.)
+        Uses the same prompt and validation logic as OpenRouter
+        
+        Returns:
+            List of validated recommendations, or empty list if failed
+        """
+        import time
+        import asyncio
+        
+        if not self.agentrouter_api_key:
+            logger.warning("AgentRouter API key not configured, cannot use fallback")
+            return []
+        
+        breaker_state = self.circuit_breaker_state.get('agentrouter', {'failures': 0, 'last_failure': None})
+        
+        # Circuit breaker: check if we should skip API call due to recent failures
+        if breaker_state['failures'] >= self.circuit_breaker_threshold:
+            if breaker_state['last_failure']:
+                time_since_failure = time.time() - breaker_state['last_failure']
+                if time_since_failure < self.circuit_breaker_cooldown:
+                    remaining = int(self.circuit_breaker_cooldown - time_since_failure)
+                    logger.warning(
+                        f"AgentRouter circuit breaker active: {breaker_state['failures']} consecutive failures. "
+                        f"Waiting {remaining}s before retry."
+                    )
+                    return []
+                else:
+                    # Cooldown expired, reset circuit breaker
+                    logger.info("AgentRouter circuit breaker cooldown expired, attempting API call again")
+                    breaker_state['failures'] = 0
+                    breaker_state['last_failure'] = None
+        
+        headers = {
+            "Authorization": f"Bearer {self.agentrouter_api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": self.agentrouter_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are an expert cryptocurrency trading analyst providing data-driven recommendations."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "temperature": 0.7,
+            "max_tokens": 2000
+        }
+        
+        max_retries = 2  # Fewer retries for fallback
+        base_timeout = 60
+        retry_delays = [2, 5]
+        
+        for attempt in range(max_retries):
+            try:
+                timeout = aiohttp.ClientTimeout(total=base_timeout + (attempt * 10))
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{self.agentrouter_base_url}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        timeout=timeout
+                    ) as response:
+                        if response.status != 200:
+                            response_text = await response.text()
+                            logger.error(
+                                f"AgentRouter API error (attempt {attempt + 1}/{max_retries}): "
+                                f"HTTP {response.status} - {response_text[:500]}"
+                            )
+                            
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(retry_delays[attempt])
+                                continue
+                            else:
+                                breaker_state['failures'] += 1
+                                breaker_state['last_failure'] = time.time()
+                                return []
+                        
+                        # Success - reset circuit breaker
+                        breaker_state['failures'] = 0
+                        breaker_state['last_failure'] = None
+                        
+                        data = await response.json()
+                        
+                        # Check if response has expected structure
+                        if 'choices' not in data or len(data['choices']) == 0:
+                            logger.error(f"AgentRouter response missing choices: {data}")
+                            breaker_state['failures'] += 1
+                            breaker_state['last_failure'] = time.time()
+                            return []
+                        
+                        content = data['choices'][0]['message']['content']
+                        
+                        # Parse JSON response (same logic as OpenRouter)
+                        content = content.strip()
+                        if content.startswith("```json"):
+                            content = content[7:]
+                        if content.startswith("```"):
+                            content = content[3:]
+                        if content.endswith("```"):
+                            content = content[:-3]
+                        content = content.strip()
+                        
+                        recommendations = json.loads(content)
+                        
+                        # === VALIDATION & QUALITY CONTROL (same as OpenRouter) ===
+                        validated_recommendations = []
+                        for rec in recommendations:
+                            # Validate required fields
+                            if not all(key in rec for key in ['symbol', 'signal', 'confidence', 'reason']):
+                                logger.warning(f"Skipping recommendation with missing fields: {rec}")
+                                continue
+                            
+                            # Validate confidence range
+                            if not isinstance(rec.get('confidence'), (int, float)) or not (50 <= rec['confidence'] <= 100):
+                                logger.warning(f"Invalid confidence {rec.get('confidence')} for {rec.get('symbol')}, skipping")
+                                continue
+                            
+                            # Validate signal
+                            valid_signals = ['STRONG BUY', 'BUY', 'HOLD', 'SELL', 'STRONG SELL']
+                            if rec.get('signal') not in valid_signals:
+                                logger.warning(f"Invalid signal '{rec.get('signal')}' for {rec.get('symbol')}, skipping")
+                                continue
+                            
+                            # Validate reason
+                            reason = rec.get('reason', '').strip()
+                            if len(reason) < 30:
+                                logger.warning(f"Reason too short for {rec.get('symbol')}: '{reason}', skipping")
+                                continue
+                            
+                            # Reject generic/vague reasons
+                            generic_terms = ['good momentum', 'looks bullish', 'looks bearish', 'market dependent', 'wait for', 'technical analysis']
+                            if any(term in reason.lower() for term in generic_terms) and len(reason) < 50:
+                                logger.warning(f"Reason too generic for {rec.get('symbol')}: '{reason}', skipping")
+                                continue
+                            
+                            # Validate and format prices
+                            entry_price = rec.get('entry_price', '')
+                            target_price = rec.get('target_price', '')
+                            stop_loss = rec.get('stop_loss', '')
+                            
+                            # Reject vague entries
+                            vague_terms = ['market dependent', 'calculate from entry', 'set 2-5%', 'below entry', 'above entry', 'depend on']
+                            if any(term in str(entry_price).lower() for term in vague_terms):
+                                logger.warning(f"Entry price too vague for {rec.get('symbol')}: '{entry_price}', skipping")
+                                continue
+                            if any(term in str(target_price).lower() for term in vague_terms):
+                                logger.warning(f"Target price too vague for {rec.get('symbol')}: '{target_price}', skipping")
+                                continue
+                            if any(term in str(stop_loss).lower() for term in vague_terms):
+                                logger.warning(f"Stop loss too vague for {rec.get('symbol')}: '{stop_loss}', skipping")
+                                continue
+                            
+                            # Ensure prices are formatted with $ sign
+                            if entry_price and not str(entry_price).startswith('$'):
+                                rec['entry_price'] = f"${entry_price}" if entry_price else entry_price
+                            if target_price and not str(target_price).startswith('$'):
+                                rec['target_price'] = f"${target_price}" if target_price else target_price
+                            if stop_loss and not str(stop_loss).startswith('$'):
+                                rec['stop_loss'] = f"${stop_loss}" if stop_loss else stop_loss
+                            
+                            # Add color coding based on signal
+                            rec['color'] = self._get_color_for_signal(rec['signal'])
+                            
+                            validated_recommendations.append(rec)
+                        
+                        if not validated_recommendations:
+                            logger.error("All AgentRouter recommendations failed validation!")
+                            return []
+                        
+                        logger.info(
+                            f"✅ AgentRouter successfully generated {len(validated_recommendations)} recommendations "
+                            f"for mode: {mode} ({len(recommendations) - len(validated_recommendations)} filtered out)"
+                        )
+                        return validated_recommendations
+                        
+            except asyncio.TimeoutError:
+                logger.error(f"AgentRouter API timeout (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delays[attempt])
+                    continue
+                else:
+                    breaker_state['failures'] += 1
+                    breaker_state['last_failure'] = time.time()
+                    return []
+            
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse AgentRouter response as JSON: {str(e)}")
+                breaker_state['failures'] += 1
+                breaker_state['last_failure'] = time.time()
+                return []
+                
+            except aiohttp.ClientError as e:
+                logger.error(f"AgentRouter API network error (attempt {attempt + 1}/{max_retries}): {type(e).__name__} - {str(e)}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delays[attempt])
+                    continue
+                else:
+                    breaker_state['failures'] += 1
+                    breaker_state['last_failure'] = time.time()
+                    return []
+            
+            except Exception as e:
+                logger.error(f"AgentRouter API unexpected error (attempt {attempt + 1}/{max_retries}): {type(e).__name__} - {str(e)}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delays[attempt])
+                    continue
+                else:
+                    breaker_state['failures'] += 1
+                    breaker_state['last_failure'] = time.time()
+                    return []
+        
         breaker_state['failures'] += 1
         breaker_state['last_failure'] = time.time()
         return []

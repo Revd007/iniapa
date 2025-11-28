@@ -59,6 +59,15 @@ class Settings:
     # Qwen: Advanced reasoning, multi-perspective analysis (DeepSeek deprecated)
     OPENROUTER_MODEL_QWEN = "qwen/qwen3-max"
     
+    # AgentRouter Fallback Settings (used when OpenRouter token habis/error)
+    # Load langsung dari environment variables yang sudah di-set (OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL)
+    # Atau bisa juga set manual via AGENTROUTER_* variables
+    AGENTROUTER_API_KEY = os.getenv("AGENTROUTER_API_KEY", os.getenv("OPENAI_API_KEY", "")).strip()
+    AGENTROUTER_BASE_URL = os.getenv("AGENTROUTER_BASE_URL", os.getenv("OPENAI_BASE_URL", "https://agentrouter.org/v1")).strip()
+    # Model: auto-load dari OPENAI_MODEL, atau bisa override dengan AGENTROUTER_MODEL
+    # Supported models: deepseek-v3.1, deepseek-v3.2, gpt-5, atau qwen/qwen-code models
+    AGENTROUTER_MODEL = os.getenv("AGENTROUTER_MODEL", os.getenv("OPENAI_MODEL", "deepseek-v3.2")).strip()
+    
     # Debug mode (define early)
     DEBUG = os.getenv("DEBUG", "false").lower() == "true"
     

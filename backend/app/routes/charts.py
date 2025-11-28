@@ -20,7 +20,7 @@ async def get_klines(
     limit: int = Query(100, description="Number of data points", ge=1, le=1000),
     asset_class: str = Query("crypto", description="crypto | forex"),
 ):
-    """Get candlestick/kline data for charting (crypto=Binance, forex=MT5)."""
+    """Get candlestick/kline data for charting (crypto=Binance, forex=MT5). Simpan hasil ke file log/txt."""
     try:
         if asset_class == "forex":
             mt5_service = getattr(request.app.state, "mt5_service", None)
@@ -39,7 +39,48 @@ async def get_klines(
         # Calculate moving averages
         if len(chart_data) >= 20:
             chart_data = calculate_moving_averages(chart_data)
-        
+
+        # Simpan hasil data ke file .log dan .txt
+        try:
+            import os
+            import json
+            from datetime import datetime
+            log_dir = "logs"
+            os.makedirs(log_dir, exist_ok=True)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Save to .log file (JSON format)
+            log_file = os.path.join(log_dir, f"klines_{symbol}_{interval}.log")
+            with open(log_file, "a", encoding="utf-8") as f:
+                log_entry = {
+                    "timestamp": datetime.now().isoformat(),
+                    "symbol": symbol,
+                    "interval": interval,
+                    "limit": limit,
+                    "asset_class": asset_class,
+                    "data": chart_data
+                }
+                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+            
+            # Save to .txt file (human-readable format)
+            txt_file = os.path.join(log_dir, f"klines_{symbol}_{interval}_{timestamp}.txt")
+            with open(txt_file, "w", encoding="utf-8") as f:
+                f.write(f"=== Klines Data ===\n")
+                f.write(f"Symbol: {symbol}\n")
+                f.write(f"Interval: {interval}\n")
+                f.write(f"Limit: {limit}\n")
+                f.write(f"Asset Class: {asset_class}\n")
+                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+                f.write(f"Data Count: {len(chart_data)}\n")
+                f.write(f"\n=== Chart Data ===\n")
+                f.write(json.dumps(chart_data, indent=2, ensure_ascii=False))
+                f.write(f"\n")
+            
+            logger.info(f"✅ Saved klines data to {log_file} and {txt_file}")
+        except Exception as fe:
+            logger.warning(f"Failed to write klines log: {fe}")
+
         return {
             "success": True,
             "symbol": symbol,
@@ -60,7 +101,7 @@ async def get_chart_data(
     limit: int = Query(100, description="Number of candles", ge=1, le=1000),
     asset_class: str = Query("crypto", description="crypto | forex"),
 ):
-    """Get formatted chart data with indicators (crypto=Binance, forex=MT5). Max 1000 candles per request."""
+    """Get formatted chart data with indicators (crypto=Binance, forex=MT5). Max 1000 candles per request. Simpan hasil ke file log/txt."""
     try:
         if asset_class == "forex":
             mt5_service = getattr(request.app.state, "mt5_service", None)
@@ -69,6 +110,47 @@ async def get_chart_data(
             # MT5 already returns formatted OHLC data
             base_data = await mt5_service.get_chart_data(symbol, interval.upper(), limit)
             chart_data = calculate_indicators(base_data) if len(base_data) >= 50 else base_data
+
+            # Simpan hasil data ke file .log dan .txt
+            try:
+                import os
+                import json
+                from datetime import datetime
+                log_dir = "logs"
+                os.makedirs(log_dir, exist_ok=True)
+                
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                
+                # Save to .log file (JSON format)
+                log_file = os.path.join(log_dir, f"chart_{symbol}_{interval}.log")
+                with open(log_file, "a", encoding="utf-8") as f:
+                    log_entry = {
+                        "timestamp": datetime.now().isoformat(),
+                        "symbol": symbol,
+                        "interval": interval,
+                        "limit": limit,
+                        "asset_class": asset_class,
+                        "data": chart_data
+                    }
+                    f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+                
+                # Save to .txt file (human-readable format)
+                txt_file = os.path.join(log_dir, f"chart_{symbol}_{interval}_{timestamp}.txt")
+                with open(txt_file, "w", encoding="utf-8") as f:
+                    f.write(f"=== Chart Data ===\n")
+                    f.write(f"Symbol: {symbol}\n")
+                    f.write(f"Interval: {interval}\n")
+                    f.write(f"Limit: {limit}\n")
+                    f.write(f"Asset Class: {asset_class}\n")
+                    f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+                    f.write(f"Data Count: {len(chart_data)}\n")
+                    f.write(f"\n=== Chart Data with Indicators ===\n")
+                    f.write(json.dumps(chart_data, indent=2, ensure_ascii=False))
+                    f.write(f"\n")
+                
+                logger.info(f"✅ Saved chart data to {log_file} and {txt_file}")
+            except Exception as fe:
+                logger.warning(f"Failed to write chart log: {fe}")
 
             return {
                 "success": True,
@@ -89,6 +171,45 @@ async def get_chart_data(
             klines = await binance_service.get_klines(symbol, interval, limit)
             
             if not klines:
+                # Simpan hasil kosong tetap dicatat di log
+                try:
+                    import os
+                    import json
+                    from datetime import datetime
+                    log_dir = "logs"
+                    os.makedirs(log_dir, exist_ok=True)
+                    
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    
+                    # Save to .log file
+                    log_file = os.path.join(log_dir, f"chart_{symbol}_{interval}.log")
+                    with open(log_file, "a", encoding="utf-8") as f:
+                        log_entry = {
+                            "timestamp": datetime.now().isoformat(),
+                            "symbol": symbol,
+                            "interval": interval,
+                            "limit": limit,
+                            "asset_class": asset_class,
+                            "data": []
+                        }
+                        f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+                    
+                    # Save to .txt file
+                    txt_file = os.path.join(log_dir, f"chart_{symbol}_{interval}_{timestamp}_EMPTY.txt")
+                    with open(txt_file, "w", encoding="utf-8") as f:
+                        f.write(f"=== Chart Data (EMPTY) ===\n")
+                        f.write(f"Symbol: {symbol}\n")
+                        f.write(f"Interval: {interval}\n")
+                        f.write(f"Limit: {limit}\n")
+                        f.write(f"Asset Class: {asset_class}\n")
+                        f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+                        f.write(f"Data Count: 0\n")
+                        f.write(f"Note: No data returned from Binance\n")
+                    
+                    logger.warning(f"⚠️ No chart data for {symbol}, saved empty log to {log_file} and {txt_file}")
+                except Exception as fe:
+                    logger.warning(f"Failed to write empty chart log: {fe}")
+
                 return {
                     "success": True,
                     "symbol": symbol,
@@ -112,6 +233,47 @@ async def get_chart_data(
             # Calculate indicators
             if len(chart_data) >= 50:
                 chart_data = calculate_indicators(chart_data)
+
+            # Simpan hasil data ke file .log dan .txt
+            try:
+                import os
+                import json
+                from datetime import datetime
+                log_dir = "logs"
+                os.makedirs(log_dir, exist_ok=True)
+                
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                
+                # Save to .log file (JSON format)
+                log_file = os.path.join(log_dir, f"chart_{symbol}_{interval}.log")
+                with open(log_file, "a", encoding="utf-8") as f:
+                    log_entry = {
+                        "timestamp": datetime.now().isoformat(),
+                        "symbol": symbol,
+                        "interval": interval,
+                        "limit": limit,
+                        "asset_class": asset_class,
+                        "data": chart_data
+                    }
+                    f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+                
+                # Save to .txt file (human-readable format)
+                txt_file = os.path.join(log_dir, f"chart_{symbol}_{interval}_{timestamp}.txt")
+                with open(txt_file, "w", encoding="utf-8") as f:
+                    f.write(f"=== Chart Data (Crypto) ===\n")
+                    f.write(f"Symbol: {symbol}\n")
+                    f.write(f"Interval: {interval}\n")
+                    f.write(f"Limit: {limit}\n")
+                    f.write(f"Asset Class: {asset_class}\n")
+                    f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+                    f.write(f"Data Count: {len(chart_data)}\n")
+                    f.write(f"\n=== Chart Data with Indicators ===\n")
+                    f.write(json.dumps(chart_data, indent=2, ensure_ascii=False))
+                    f.write(f"\n")
+                
+                logger.info(f"✅ Saved crypto chart data to {log_file} and {txt_file}")
+            except Exception as fe:
+                logger.warning(f"Failed to write chart log: {fe}")
             
             return {
                 "success": True,

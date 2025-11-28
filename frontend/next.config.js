@@ -10,13 +10,6 @@ const nextConfig = {
   turbopack: {
     // Path aliases are handled by tsconfig.json
   },
-  // WAJIB ADA untuk menghindari exit code 1 saat deploy
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
 }
 
 module.exports = nextConfig
