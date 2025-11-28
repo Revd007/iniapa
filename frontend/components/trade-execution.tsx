@@ -194,7 +194,7 @@ export default function TradeExecution({ mode, assetClass, symbol, environment =
             placeholder={leverageMap[mode]}
                 className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-purple-500"
             min="1"
-            max="20"
+            max="125"
           />
         </div>
         <div>

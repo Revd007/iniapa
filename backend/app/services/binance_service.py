@@ -404,6 +404,34 @@ class BinanceService:
         }
         return await self._request("GET", "/v3/klines", params)
     
+    async def get_chart_data(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 1000
+    ) -> List[Dict]:
+        """
+        Get formatted chart data (OHLCV) for charting
+        Returns data in format: [{"time": int, "price": float, "open": float, "high": float, "low": float, "close": float, "volume": float}, ...]
+        """
+        klines = await self.get_klines(symbol, interval, limit)
+        
+        # Format for chart
+        chart_data = []
+        for kline in klines:
+            close_price = float(kline[4])
+            chart_data.append({
+                "time": int(kline[0]),
+                "price": close_price,
+                "open": float(kline[1]),
+                "high": float(kline[2]),
+                "low": float(kline[3]),
+                "close": close_price,
+                "volume": float(kline[5])
+            })
+        
+        return chart_data
+    
     async def create_order(
         self,
         symbol: str,

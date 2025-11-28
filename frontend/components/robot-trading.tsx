@@ -440,11 +440,25 @@ export default function RobotTrading({ mode, assetClass, environment = 'live' }:
 
         {/* Leverage */}
         <div className="bg-slate-800/50 p-1.5 rounded border border-slate-700">
-          <label className="text-[9px] text-slate-400 block mb-1">
-            Leverage: {config.leverage}x 🔥
-          </label>
-          <div className="grid grid-cols-4 gap-1">
-            {[25, 30, 40, 50].map(lev => (
+          <div className="flex justify-between items-center mb-1">
+            <label className="text-[9px] text-slate-400">
+              Leverage: {config.leverage}x 🔥
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="125"
+              step="1"
+              value={config.leverage}
+              onChange={(e) => {
+                const value = parseInt(e.target.value) || 1
+                setConfig(prev => ({ ...prev, leverage: Math.min(125, Math.max(1, value)) }))
+              }}
+              className="w-16 px-1 py-0.5 text-[10px] text-center bg-slate-900 border border-slate-600 rounded text-white focus:outline-none focus:ring-1 focus:ring-orange-500"
+            />
+          </div>
+          <div className="grid grid-cols-5 gap-1">
+            {[1, 10, 25, 50, 100, 125].map(lev => (
               <button
                 key={lev}
                 onClick={() => setConfig(prev => ({ ...prev, leverage: lev }))}
@@ -457,6 +471,9 @@ export default function RobotTrading({ mode, assetClass, environment = 'live' }:
                 {lev}x
               </button>
             ))}
+          </div>
+          <div className="text-[8px] text-slate-500 mt-1">
+            Range: 1x - 125x (Binance max)
           </div>
         </div>
 

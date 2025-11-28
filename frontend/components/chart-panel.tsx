@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { chartApi, type ChartData } from '@/lib/api'
-import CandlestickChartWithIndicators from './candlestick-chart-with-indicators'
+import ApexCandlestickChart from './apex-candlestick-chart'
 
 interface ChartPanelProps {
   mode: 'scalper' | 'normal' | 'aggressive' | 'longhold'
@@ -39,8 +39,8 @@ export default function ChartPanel({ mode, assetClass, symbol }: ChartPanelProps
 
   const intervalOptions = getIntervalOptions()
 
-  // Calculate optimal limit - maximize data untuk analisis lebih baik
-  // Binance API support up to 1000 candles per request
+  // Calculate optimal limit - OPTIMIZED for performance
+  // Further reduced limits to improve ApexCharts rendering speed
   const getOptimalLimit = (mode: string, interval: string): number => {
     // Parse interval to minutes
     const intervalToMinutes: Record<string, number> = {
@@ -51,36 +51,38 @@ export default function ChartPanel({ mode, assetClass, symbol }: ChartPanelProps
     
     const minutes = intervalToMinutes[interval] || 60
 
-    // Scalper: Maximum data for short timeframes
+    // OPTIMIZED: Further reduced limits for ApexCharts performance
+    // ApexCharts works best with 200-300 data points max
+    // Scalper: Focus on recent data
     if (mode === 'scalper') {
-      if (minutes <= 5) return 1000   // 1m=16h, 3m=50h, 5m=83h
-      if (minutes <= 15) return 1000  // 15m=10 days
-      if (minutes <= 60) return 1000  // 30m=20 days, 1h=41 days
-      return 500                       // 2h+=longer periods
+      if (minutes <= 5) return 250   // Further reduced for ApexCharts
+      if (minutes <= 15) return 300   // Further reduced
+      if (minutes <= 60) return 300   // Further reduced
+      return 200                      // Further reduced
     }
     
-    // Long Hold: Maximum historical data
+    // Long Hold: Reasonable historical data
     if (mode === 'longhold') {
-      if (minutes <= 240) return 1000 // Up to 4h = 166 days
-      if (minutes <= 1440) return 500 // 1d = 500 days
-      if (minutes <= 10080) return 365 // 1w = 7 years
-      return 120                       // 1M = 10 years
+      if (minutes <= 240) return 200  // Further reduced
+      if (minutes <= 1440) return 200  // Further reduced
+      if (minutes <= 10080) return 150 // Further reduced
+      return 100                      // Further reduced
     }
     
-    // Aggressive: Maximum data for pattern recognition
+    // Aggressive: Balanced data
     if (mode === 'aggressive') {
-      if (minutes <= 5) return 1000
-      if (minutes <= 60) return 1000
-      if (minutes <= 240) return 1000
-      return 500
+      if (minutes <= 5) return 250
+      if (minutes <= 60) return 250
+      if (minutes <= 240) return 200
+      return 200
     }
     
-    // Normal: Generous limits untuk comprehensive analysis
-    if (minutes <= 15) return 1000    // 15m=10 days
-    if (minutes <= 60) return 1000    // 1h=41 days
-    if (minutes <= 240) return 1000   // 4h=166 days
-    if (minutes <= 1440) return 500   // 1d=500 days
-    return 365                         // 1w=7 years
+    // Normal: Optimized limits for ApexCharts
+    if (minutes <= 15) return 250    // Further reduced
+    if (minutes <= 60) return 250     // Further reduced
+    if (minutes <= 240) return 200    // Further reduced
+    if (minutes <= 1440) return 200   // Further reduced
+    return 150                        // Further reduced
   }
 
   useEffect(() => {
@@ -166,7 +168,7 @@ export default function ChartPanel({ mode, assetClass, symbol }: ChartPanelProps
   return (
     <div className={`bg-slate-900/50 border border-slate-800 rounded-lg flex flex-col ${
       isFullscreen ? 'fixed inset-0 z-50 m-0 rounded-none h-screen' : 'h-full'
-    }`}>
+    }`} style={!isFullscreen ? { minHeight: '600px' } : undefined}>
       <div className="flex justify-between items-center p-2 border-b border-slate-800 flex-shrink-0">
         <div>
           <h2 className="text-[11px] font-semibold text-white uppercase tracking-wide">{chartTitles[assetClass]}</h2>
@@ -216,8 +218,8 @@ export default function ChartPanel({ mode, assetClass, symbol }: ChartPanelProps
         </div>
       </div>
 
-      {/* Chart Area - Takes Full Available Space */}
-      <div className="flex-1 min-h-0">
+      {/* Chart Area - Takes Full Available Space - Minimum height for visibility */}
+      <div className="flex-1 min-h-0" style={{ minHeight: '500px' }}>
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center text-slate-400">
@@ -238,9 +240,16 @@ export default function ChartPanel({ mode, assetClass, symbol }: ChartPanelProps
             </div>
           </div>
         ) : (
-          <div className="h-full w-full bg-slate-950">
+          <div className="h-full w-full">
             {chartType === 'candle' ? (
-              <CandlestickChartWithIndicators data={chartData} />
+              <ApexCandlestickChart
+                data={chartData}
+                height="100%"
+                showRSI={true}
+                showMACD={true}
+                showVolume={true}
+                showMA={true}
+              />
             ) : (
               <div className="flex items-center justify-center h-full">
                 <p className="text-xs text-slate-400 text-center">Line chart view - Switch to candlestick for full analysis</p>

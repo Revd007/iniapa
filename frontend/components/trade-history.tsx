@@ -110,15 +110,15 @@ export default function TradeHistory({ environment = 'live' }: TradeHistoryProps
                 </td>
                 <td className="py-1 pr-2 text-right">${trade.entry_price.toFixed(2)}</td>
                 <td className="py-1 pr-2 text-right">
-                  {trade.exit_price !== null ? `$${trade.exit_price.toFixed(2)}` : '-'}
+                  {trade.exit_price !== undefined ? `$${trade.exit_price.toFixed(2)}` : '-'}
                 </td>
                 <td className="py-1 pr-2 text-right">{trade.quantity}</td>
                 <td className="py-1 pr-2 text-right">{trade.leverage}x</td>
                 <td className="py-1 pr-2 text-right">
-                  {trade.profit_loss !== null && trade.profit_loss !== undefined ? (
+                  {trade.profit_loss !== undefined ? (
                     <span className={trade.profit_loss >= 0 ? 'text-green-400' : 'text-red-400'}>
                       ${trade.profit_loss.toFixed(2)}
-                      {trade.profit_loss_percent !== null && trade.profit_loss_percent !== undefined && (
+                      {trade.profit_loss_percent !== undefined && (
                         <span className="text-[9px] ml-1">
                           ({trade.profit_loss_percent >= 0 ? '+' : ''}{trade.profit_loss_percent.toFixed(2)}%)
                         </span>
