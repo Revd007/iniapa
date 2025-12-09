@@ -50,6 +50,7 @@ class RobotStatusResponse(BaseModel):
 
 @router.get("/config", response_model=dict)
 async def get_robot_config(
+    environment: str = Query("live", description="Environment: demo or live"),
     db: Session = Depends(get_db),
     user_id: int = 1  # TODO: Get from auth context
 ):
@@ -61,10 +62,22 @@ async def get_robot_config(
     - Active strategies
     - Risk management settings
     - Execution statistics
+    
+    Args:
+        environment: 'demo' or 'live' - determines which config to return
     """
     try:
-        config = RobotConfigService.get_config(db, user_id)
-        return RobotConfigService.to_dict(config)
+        # Normalize environment
+        environment = environment.lower().strip() if environment else "live"
+        if environment == "production":
+            environment = "live"
+        if environment not in ["demo", "live"]:
+            environment = "live"
+        
+        config = RobotConfigService.get_config(db, user_id, environment)
+        result = RobotConfigService.to_dict(config)
+        result['environment'] = environment
+        return result
     except Exception as e:
         logger.error(f"Failed to get robot config: {e}")
         raise HTTPException(status_code=500, detail=str(e))

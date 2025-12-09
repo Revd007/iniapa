@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 import logging
 
 from app.services.ai_service import AIRecommendationService
+from app.services.ai_provider_service import AIProviderManager
 from app.config import settings
 from app.database import get_db
 from app.models import Trade, MarketSymbol, AssetClass
@@ -17,7 +18,7 @@ from app.models import Trade, MarketSymbol, AssetClass
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-ai_service = AIRecommendationService()
+ai_service = AIRecommendationService()  # Keep for backward compatibility
 
 
 @router.get("/recommendations")
@@ -145,22 +146,59 @@ async def get_ai_recommendations(
 
         history_context = "\n".join(history_context_lines)
         
-        # Generate AI recommendations (with technical + historical context)
-        recommendations = await ai_service.generate_recommendations(
-            mode=mode,
-            market_data=market_data,
-            asset_class=asset_class,
-            technical_data=None,
-            limit=limit,
-            history_context=history_context,
-            ai_model=ai_model,
-        )
+        # Use AIProviderManager (database-driven config) with fallback to old service
+        user_id = 1  # TODO: Get from auth/session
+        provider_used = "legacy"
+        
+        try:
+            # Try using new AIProviderManager (database config)
+            provider_manager = AIProviderManager(user_id)
+            recommendations, provider_used = await provider_manager.generate_recommendations(
+                mode=mode,
+                market_data=market_data,
+                asset_class=asset_class,
+                limit=limit,
+                history_context=history_context
+            )
+            
+            if not recommendations:
+                # Fallback to old service if new system returns empty
+                logger.warning("AIProviderManager returned empty, falling back to old AI service")
+                recommendations = await ai_service.generate_recommendations(
+                    mode=mode,
+                    market_data=market_data,
+                    asset_class=asset_class,
+                    technical_data=None,
+                    limit=limit,
+                    history_context=history_context,
+                    ai_model=ai_model,
+                )
+                provider_used = "legacy"
+        except Exception as e:
+            # Fallback to old service on error
+            logger.warning(f"AIProviderManager error: {e}, falling back to old AI service")
+            try:
+                recommendations = await ai_service.generate_recommendations(
+                    mode=mode,
+                    market_data=market_data,
+                    asset_class=asset_class,
+                    technical_data=None,
+                    limit=limit,
+                    history_context=history_context,
+                    ai_model=ai_model,
+                )
+                provider_used = "legacy"
+            except Exception as e2:
+                logger.error(f"Both AIProviderManager and legacy service failed: {e2}")
+                recommendations = []
+                provider_used = "fallback"
         
         return {
             "success": True,
             "mode": mode,
             "asset_class": asset_class,
             "ai_model": ai_model,
+            "provider_used": provider_used,  # 'openrouter', 'agentrouter', 'legacy', or 'fallback'
             "recommendations": recommendations,
             "market_context": market_data
         }

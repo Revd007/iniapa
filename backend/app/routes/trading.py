@@ -427,9 +427,12 @@ async def get_positions(
         
         binance_service = request.app.state.binance_service
 
-        # Normalize env (accept production as alias for live)
-        if env.lower() == "production":
+        # Normalize env (accept aliases)
+        env = env.lower()
+        if env == "production":
             env = "live"
+        elif env == "simulation":
+            env = "demo"  # simulation is alias for demo
         
         # Filter by execution_mode (demo/live)
         execution_mode = TradeMode.DEMO if env == "demo" else TradeMode.LIVE
@@ -748,9 +751,12 @@ async def get_trade_history(
     try:
         from app.models import TradeMode
         
-        # Normalize env (accept production as alias for live)
-        if env.lower() == "production":
+        # Normalize env (accept aliases)
+        env = env.lower()
+        if env == "production":
             env = "live"
+        elif env == "simulation":
+            env = "demo"  # simulation is alias for demo
         
         # Filter by execution_mode (demo/live)
         execution_mode = TradeMode.DEMO if env == "demo" else TradeMode.LIVE

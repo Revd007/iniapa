@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/header'
+import AIProviderSettings from '@/components/ai-provider-settings'
 
 interface PortfolioMarginInfo {
   total_wallet_balance: number
@@ -59,7 +60,7 @@ interface WithdrawalRecord {
   created_at: string
 }
 
-type MenuSection = 'account' | 'api-keys' | 'withdrawal' | 'history'
+type MenuSection = 'account' | 'api-keys' | 'withdrawal' | 'history' | 'ai-providers'
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -295,6 +296,7 @@ export default function SettingsPage() {
   const menuItems = [
     { id: 'account' as MenuSection, label: 'Account Overview', icon: '👤' },
     { id: 'api-keys' as MenuSection, label: 'API Configuration', icon: '🔑' },
+    { id: 'ai-providers' as MenuSection, label: 'AI Recommendations', icon: '🤖' },
     { id: 'withdrawal' as MenuSection, label: 'Withdraw Funds', icon: '💸' },
     { id: 'history' as MenuSection, label: 'Withdrawal History', icon: '📜' },
   ]
@@ -740,6 +742,11 @@ export default function SettingsPage() {
                     </button>
                   </div>
                 </div>
+              )}
+
+              {/* AI Providers Section */}
+              {activeSection === 'ai-providers' && (
+                <AIProviderSettings />
               )}
 
               {/* Withdrawal History Section */}

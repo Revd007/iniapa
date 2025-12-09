@@ -171,11 +171,18 @@ function AIPanel({ model, mode, assetClass, recommendations, loading, error, onR
         <div className="flex justify-between items-center">
           <span>{modelIcon} {modelName} AI</span>
           {!loading && recommendations.length > 0 && (
-            recommendations.some(r => r.is_fallback) ? (
-              <span className="text-red-400">⚠️ Fallback</span>
-            ) : (
-              <span className="text-green-400">● Live</span>
-            )
+            <>
+              {recommendations.some(r => r.is_fallback) ? (
+                <span className="text-red-400">⚠️ Fallback</span>
+              ) : (
+                <span className="text-green-400">● Live</span>
+              )}
+              {recommendations[0]?.provider_used && recommendations[0].provider_used !== 'legacy' && (
+                <span className="text-blue-400 ml-2">
+                  {recommendations[0].provider_used === 'openrouter' ? '☁️' : '💻'}
+                </span>
+              )}
+            </>
           )}
         </div>
       </div>

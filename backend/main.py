@@ -13,7 +13,7 @@ from datetime import datetime
 import logging
 import asyncio
 
-from app.routes import market, trading, performance, ai_recommendations, charts, account, auth, settings, robot, user_settings
+from app.routes import market, trading, performance, ai_recommendations, charts, account, auth, settings, robot, user_settings, ai_providers
 from app.routes import account_comprehensive
 from app.services.binance_service import BinanceService
 from app.services.mt5_service import MT5Service
@@ -94,9 +94,10 @@ async def lifespan(app: FastAPI):
     market_sync = MarketSyncService(binance_service)
     app.state.market_sync = market_sync
     
-    # Initialize robot trading service
+    # Initialize robot trading service (DO NOT auto-start - safety first!)
     robot_service.set_binance_service(binance_service)
     logger.info("✓ Robot trading service initialized")
+    logger.info("⚠️  SAFETY: Robot will NOT auto-start. Must be explicitly enabled via API.")
     
     # Sync crypto symbols on startup (non-blocking)
     async def initial_sync():
@@ -211,6 +212,7 @@ app.include_router(account_comprehensive.router, prefix="/api/account", tags=["A
 app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(robot.router, prefix="/api/robot", tags=["Robot Trading"])
 app.include_router(user_settings.router, prefix="/api/user-settings", tags=["User Settings"])
+app.include_router(ai_providers.router, prefix="/api/ai-providers", tags=["AI Providers"])
 
 
 if __name__ == "__main__":

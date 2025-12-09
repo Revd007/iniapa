@@ -30,6 +30,7 @@ export interface MarketData {
 }
 
 export interface AIRecommendation {
+  provider_used?: string;  // 'openrouter', 'agentrouter', 'legacy', 'fallback'
   symbol: string;
   name: string;
   signal: string;
@@ -355,8 +356,8 @@ export const robotApi = {
   /**
    * Get robot trading configuration
    */
-  async getConfig(): Promise<RobotConfig> {
-    const response = await fetch(`${API_BASE_URL}/api/robot/config`);
+  async getConfig(environment: 'demo' | 'live' = 'live'): Promise<RobotConfig> {
+    const response = await fetch(`${API_BASE_URL}/api/robot/config?environment=${environment}`);
     if (!response.ok) throw new Error('Failed to fetch robot config');
     return await response.json();
   },

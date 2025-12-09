@@ -70,7 +70,7 @@ async def get_account_summary(
             return {
                 "success": True,
                 "mode": "demo",
-                "environment": "simulation",
+                "environment": "demo",  # Use 'demo' instead of 'simulation' for consistency
                 "balance": balance_info['balance'],
                 "equity": balance_info['equity'],
                 "available_balance": balance_info['free_margin'],

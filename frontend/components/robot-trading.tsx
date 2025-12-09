@@ -51,21 +51,21 @@ export default function RobotTrading({ mode, assetClass, environment = 'live' }:
   const [loading, setLoading] = useState(false)
   
   /**
-   * Load robot configuration from backend on mount
+   * Load robot configuration from backend on mount and when environment changes
    * Syncs configuration from database to ensure consistency across sessions
    */
   useEffect(() => {
     setMounted(true)
     loadConfigFromBackend()
-  }, [])
+  }, [environment])
 
   /**
    * Load configuration from backend API
-   * Automatically syncs with current mode and asset class
+   * Automatically syncs with current mode, asset class, and environment
    */
   const loadConfigFromBackend = async () => {
     try {
-      const apiConfig = await robotApi.getConfig()
+      const apiConfig = await robotApi.getConfig(environment)
       setConfigState({
         enabled: apiConfig.enabled,
         minConfidence: apiConfig.min_confidence,
@@ -336,15 +336,15 @@ export default function RobotTrading({ mode, assetClass, environment = 'live' }:
           </span>
           </div>
           <div className="text-[8px] text-slate-500">
-            Mode: {mode.toUpperCase()} · {assetClass.toUpperCase()}
+            Mode: {mode.toUpperCase()} · {assetClass.toUpperCase()} · <span className={environment === 'live' ? 'text-amber-400' : 'text-emerald-400'}>{environment.toUpperCase()}</span>
           </div>
         </div>
         <button
           onClick={async () => {
             setLoading(true)
             try {
-              // ALWAYS use 'live' environment for Futures trading
-              const env = 'live' as 'demo' | 'live'
+              // Use the environment prop passed from parent (demo/live)
+              const env = environment as 'demo' | 'live'
               
               console.log(`🔄 Robot toggle: current enabled=${config.enabled}, using environment=${env}`)
               

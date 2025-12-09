@@ -36,6 +36,13 @@ async def get_performance_dashboard(
     try:
         from app.models import TradeMode
         
+        # Normalize env (accept aliases)
+        env = env.lower()
+        if env == "production":
+            env = "live"
+        elif env == "simulation":
+            env = "demo"  # simulation is alias for demo
+        
         # Filter by execution_mode (demo/live)
         execution_mode = TradeMode.DEMO if env == "demo" else TradeMode.LIVE
         
@@ -215,6 +222,13 @@ async def get_profit_chart(
     """Get profit chart data for specified number of days"""
     try:
         from app.models import TradeMode
+        
+        # Normalize env (accept aliases)
+        env = env.lower()
+        if env == "production":
+            env = "live"
+        elif env == "simulation":
+            env = "demo"  # simulation is alias for demo
         
         # Filter by execution_mode (demo/live)
         execution_mode = TradeMode.DEMO if env == "demo" else TradeMode.LIVE

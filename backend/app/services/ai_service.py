@@ -622,7 +622,10 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
         
         if not self.agentrouter_api_key:
             logger.warning("AgentRouter API key not configured, cannot use fallback")
+            logger.info("   → Set AGENTROUTER_API_KEY or OPENAI_API_KEY environment variable to enable fallback")
             return []
+        
+        logger.info(f"🔄 Attempting AgentRouter fallback with model: {self.agentrouter_model}")
         
         breaker_state = self.circuit_breaker_state.get('agentrouter', {'failures': 0, 'last_failure': None})
         
@@ -648,8 +651,16 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
             "Content-Type": "application/json"
         }
         
+        # Use Qwen model for AgentRouter (same as OpenRouter for consistency)
+        # AgentRouter supports: qwen, qwen/qwen-code, qwen/qwen-max, deepseek-v3.2, etc.
+        model_to_use = self.agentrouter_model
+        if not model_to_use or model_to_use == "deepseek-v3.2":
+            # Default to qwen if not specified or still using old default
+            model_to_use = "qwen"
+            logger.info(f"   → Using default Qwen model for AgentRouter: {model_to_use}")
+        
         payload = {
-            "model": self.agentrouter_model,
+            "model": model_to_use,
             "messages": [
                 {
                     "role": "system",
@@ -664,6 +675,8 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
             "max_tokens": 2000
         }
         
+        logger.info(f"📤 AgentRouter request: URL={self.agentrouter_base_url}/chat/completions, Model={model_to_use}")
+        
         max_retries = 2  # Fewer retries for fallback
         base_timeout = 60
         retry_delays = [2, 5]
@@ -673,18 +686,24 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
                 timeout = aiohttp.ClientTimeout(total=base_timeout + (attempt * 10))
                 
                 async with aiohttp.ClientSession() as session:
+                    logger.info(f"📡 AgentRouter API call (attempt {attempt + 1}/{max_retries}): {self.agentrouter_base_url}/chat/completions")
                     async with session.post(
                         f"{self.agentrouter_base_url}/chat/completions",
                         headers=headers,
                         json=payload,
                         timeout=timeout
                     ) as response:
+                        response_text = await response.text()
                         if response.status != 200:
-                            response_text = await response.text()
                             logger.error(
-                                f"AgentRouter API error (attempt {attempt + 1}/{max_retries}): "
+                                f"❌ AgentRouter API error (attempt {attempt + 1}/{max_retries}): "
                                 f"HTTP {response.status} - {response_text[:500]}"
                             )
+                            logger.error(f"   Model used: {model_to_use}")
+                            logger.error(f"   Base URL: {self.agentrouter_base_url}")
+                            logger.error(f"   API Key present: {bool(self.agentrouter_api_key)}")
+                            logger.error(f"   API Key length: {len(self.agentrouter_api_key) if self.agentrouter_api_key else 0}")
+                            logger.error(f"   Request payload model: {payload.get('model')}")
                             
                             if attempt < max_retries - 1:
                                 await asyncio.sleep(retry_delays[attempt])
@@ -698,16 +717,20 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
                         breaker_state['failures'] = 0
                         breaker_state['last_failure'] = None
                         
+                        logger.info(f"✅ AgentRouter API response received: HTTP {response.status}")
                         data = await response.json()
+                        logger.debug(f"   Response keys: {list(data.keys())}")
                         
                         # Check if response has expected structure
                         if 'choices' not in data or len(data['choices']) == 0:
-                            logger.error(f"AgentRouter response missing choices: {data}")
+                            logger.error(f"❌ AgentRouter response missing choices: {data}")
+                            logger.error(f"   Full response: {json.dumps(data, indent=2)[:500]}")
                             breaker_state['failures'] += 1
                             breaker_state['last_failure'] = time.time()
                             return []
                         
                         content = data['choices'][0]['message']['content']
+                        logger.info(f"✅ AgentRouter response content received (length: {len(content)} chars)")
                         
                         # Parse JSON response (same logic as OpenRouter)
                         content = content.strip()
@@ -719,7 +742,16 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
                             content = content[:-3]
                         content = content.strip()
                         
-                        recommendations = json.loads(content)
+                        try:
+                            recommendations = json.loads(content)
+                            logger.info(f"✅ AgentRouter JSON parsed successfully: {len(recommendations)} recommendations")
+                        except json.JSONDecodeError as e:
+                            logger.error(f"❌ Failed to parse AgentRouter JSON response: {str(e)}")
+                            logger.error(f"   Content preview: {content[:200]}...")
+                            logger.error(f"   Content length: {len(content)}")
+                            breaker_state['failures'] += 1
+                            breaker_state['last_failure'] = time.time()
+                            return []
                         
                         # === VALIDATION & QUALITY CONTROL (same as OpenRouter) ===
                         validated_recommendations = []
@@ -788,7 +820,8 @@ Return ONLY the JSON array, no markdown, no explanation, no additional text."""
                         
                         logger.info(
                             f"✅ AgentRouter successfully generated {len(validated_recommendations)} recommendations "
-                            f"for mode: {mode} ({len(recommendations) - len(validated_recommendations)} filtered out)"
+                            f"for mode: {mode} using model: {model_to_use} "
+                            f"({len(recommendations) - len(validated_recommendations)} filtered out)"
                         )
                         return validated_recommendations
                         

@@ -16,8 +16,15 @@ class RobotConfigService:
     """Service to manage robot trading configuration"""
     
     @staticmethod
-    def get_config(db: Session, user_id: int = 1) -> Optional[RobotConfig]:
-        """Get robot config for user, create if not exists"""
+    def get_config(db: Session, user_id: int = 1, environment: str = None) -> Optional[RobotConfig]:
+        """
+        Get robot config for user, create if not exists
+        
+        Args:
+            db: Database session
+            user_id: User ID
+            environment: Optional - if provided, update config's environment field
+        """
         config = db.query(RobotConfig).filter_by(user_id=user_id).first()
         
         if not config:
@@ -36,14 +43,14 @@ class RobotConfigService:
                 max_drawdown_percent=20.0,
                 ai_models="qwen",
                 require_consensus=False,  # Not needed since only Qwen
-                environment="demo",  # Default to demo mode
+                environment=environment or "demo",  # Use provided environment or default to demo
                 trade_cooldown_seconds=30,  # 30 seconds cooldown (less conservative)
                 scan_interval_seconds=30,  # Scan every 30 seconds
             )
             db.add(config)
             db.commit()
             db.refresh(config)
-            logger.info(f"Created default robot config for user {user_id}")
+            logger.info(f"Created default robot config for user {user_id} (environment: {environment or 'demo'})")
         
         return config
     
@@ -96,6 +103,7 @@ class RobotConfigService:
         """Convert config to dictionary for API response"""
         return {
             'enabled': config.enabled,
+            'environment': config.environment or 'demo',
             'min_confidence': config.min_confidence,
             'max_positions': config.max_positions,
             'leverage': config.leverage,
